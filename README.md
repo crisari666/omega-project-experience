@@ -2,6 +2,8 @@
 
 Mapbox player for a published Omega project. The host shows the map, amenities, and scene playback. Lot purchase stays in the host.
 
+The player includes Map Options (3D view, satellite, travel times) in the browser. Those choices are not saved on the project. Travel times use the same `mapboxAccessToken`.
+
 ## Install
 
 The host must already depend on `react`, `react-dom`, `mapbox-gl`, and `three`.

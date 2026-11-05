@@ -2,6 +2,11 @@ import React, { useEffect, useMemo, useRef, useState } from "react"
 import mapboxgl, { type GeoJSONSource, type Map, type MapMouseEvent } from "mapbox-gl"
 import "mapbox-gl/dist/mapbox-gl.css"
 import { AmenityDetail } from "./amenity-detail"
+import {
+  MapOptions,
+  type TravelMinutes,
+  type TravelProfile
+} from "./map-options"
 import { loadPublishedExperience, resolveMediaUrl } from "./load-published"
 import { playCameraMotion } from "./play-camera-motion"
 import {
@@ -26,6 +31,21 @@ const PULSE_DURATION_MS = 1800
 const HALO_START_RADIUS = 8
 const HALO_GROWTH = 16
 const HALO_PEAK_OPACITY = 0.38
+const ISO_SOURCE = "experience-isochrone"
+const ISO_LAYER = "experience-isochrone-fill"
+const SATELLITE_STYLE = "mapbox://styles/mapbox/satellite-streets-v12"
+const STREETS_STYLE = "mapbox://styles/mapbox/streets-v12"
+const EMPTY_COLLECTION: GeoJSON.FeatureCollection = {
+  type: "FeatureCollection",
+  features: []
+}
+
+type OverlaySnap = {
+  experience: ExperiencePlayerData | null
+  amenities: GeoJSON.FeatureCollection
+  showAmenities: boolean
+  travelGeojson: GeoJSON.FeatureCollection | null
+}
 
 export type ProjectExperienceProps = {
   projectId: string
@@ -82,6 +102,144 @@ function toAmenityPayload(
   }
 }
 
+function mountExperienceLayers(
+  map: Map,
+  snap: OverlaySnap,
+  glbRef: { current: StudioGlbCustomLayer | null }
+): void {
+  const experience = snap.experience
+  if (!experience) return
+  if (experience.map.terrain) {
+    if (!map.getSource("mapbox-dem")) {
+      map.addSource("mapbox-dem", {
+        type: "raster-dem",
+        url: "mapbox://mapbox.mapbox-terrain-dem-v1",
+        tileSize: 512,
+        maxzoom: 14
+      })
+    }
+    map.setTerrain({
+      source: "mapbox-dem",
+      exaggeration: experience.map.terrainExaggeration || 1
+    })
+  }
+  if (!map.getSource(ISO_SOURCE)) {
+    map.addSource(ISO_SOURCE, {
+      type: "geojson",
+      data: snap.travelGeojson ?? EMPTY_COLLECTION
+    })
+  } else {
+    ;(map.getSource(ISO_SOURCE) as GeoJSONSource).setData(
+      snap.travelGeojson ?? EMPTY_COLLECTION
+    )
+  }
+  if (!map.getLayer(ISO_LAYER)) {
+    map.addLayer(
+      {
+        id: ISO_LAYER,
+        type: "fill",
+        source: ISO_SOURCE,
+        paint: {
+          "fill-color": "#E07A3D",
+          "fill-opacity": 0.28,
+          "fill-outline-color": "#C4632A"
+        }
+      },
+      map.getLayer(LOT_LAYER) ? LOT_LAYER : undefined
+    )
+  }
+  if (!map.getSource(LOT_SOURCE)) {
+    map.addSource(LOT_SOURCE, {
+      type: "geojson",
+      data: experience.lots ?? EMPTY_COLLECTION
+    })
+  }
+  if (!map.getLayer(LOT_LAYER)) {
+    map.addLayer({
+      id: LOT_LAYER,
+      type: "fill",
+      source: LOT_SOURCE,
+      layout: { visibility: experience.layers.lots ? "visible" : "none" },
+      paint: {
+        "fill-color": [
+          "match",
+          ["get", "status"],
+          "available",
+          "#15803d",
+          "sold",
+          "#64748b",
+          "reserved",
+          "#b45309",
+          "#1e293b"
+        ],
+        "fill-opacity": 0.55
+      }
+    })
+  }
+  if (!map.getSource(AMENITY_SOURCE)) {
+    map.addSource(AMENITY_SOURCE, { type: "geojson", data: snap.amenities })
+  }
+  const amenityVisibility = snap.showAmenities ? "visible" : "none"
+  if (!map.getLayer(AMENITY_HALO_LAYER)) {
+    map.addLayer({
+      id: AMENITY_HALO_LAYER,
+      type: "circle",
+      source: AMENITY_SOURCE,
+      layout: { visibility: amenityVisibility },
+      paint: {
+        "circle-radius": HALO_START_RADIUS + HALO_GROWTH * 0.45,
+        "circle-color": "#38bdf8",
+        "circle-opacity": 0.22,
+        "circle-stroke-width": 0
+      }
+    })
+  }
+  if (!map.getLayer(AMENITY_LAYER)) {
+    map.addLayer({
+      id: AMENITY_LAYER,
+      type: "circle",
+      source: AMENITY_SOURCE,
+      layout: { visibility: amenityVisibility },
+      paint: {
+        "circle-radius": 8,
+        "circle-color": "#38bdf8",
+        "circle-stroke-width": 2,
+        "circle-stroke-color": "#0f172a"
+      }
+    })
+  }
+  const placements: StudioGlbPlacement[] = experience.assets
+    .filter((asset) => asset.type === "model_3d" && asset.url)
+    .map((asset) => ({
+      id: asset.id,
+      url: resolveMediaUrl(experience.apiOrigin, asset.url),
+      longitude: asset.position.longitude,
+      latitude: asset.position.latitude,
+      altitude: asset.position.altitude ?? 0,
+      scale: asset.transform.scale || 1,
+      rotation: [
+        asset.transform.rotation[0] ?? 0,
+        asset.transform.rotation[1] ?? 0,
+        asset.transform.rotation[2] ?? 0
+      ]
+    }))
+  if (experience.layers.models3D && placements.length > 0) {
+    const layer = ensureStudioGlbLayer(map, glbRef.current)
+    glbRef.current = layer
+    void layer.syncPlacements(placements)
+  }
+  if (map.getLayer(ISO_LAYER) && map.getLayer(LOT_LAYER)) {
+    map.moveLayer(ISO_LAYER, LOT_LAYER)
+  }
+}
+
+function prefersReducedMotion(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  )
+}
+
 function amenityCollection(locations: readonly PublicAmenity[]): GeoJSON.FeatureCollection {
   return {
     type: "FeatureCollection",
@@ -128,6 +286,15 @@ export function ProjectExperience({
   const [isMobile, setIsMobile] = useState(
     typeof window !== "undefined" ? window.innerWidth < 900 : false
   )
+  const [pitchOn, setPitchOn] = useState(false)
+  const [satelliteOn, setSatelliteOn] = useState(false)
+  const [travelOn, setTravelOn] = useState(false)
+  const [travelProfile, setTravelProfile] = useState<TravelProfile>("walking")
+  const [travelMinutes, setTravelMinutes] = useState<TravelMinutes>(10)
+  const [travelGeojson, setTravelGeojson] = useState<GeoJSON.FeatureCollection | null>(
+    null
+  )
+  const [travelError, setTravelError] = useState<string | null>(null)
   const onLotClickRef = useRef(onLotClick)
   const onAmenitySelectRef = useRef(onAmenitySelect)
   onLotClickRef.current = onLotClick
@@ -171,6 +338,62 @@ export function ProjectExperience({
     () => amenityCollection(loaded?.locations ?? []),
     [loaded?.locations]
   )
+  const overlayRef = useRef<OverlaySnap>({
+    experience: loaded,
+    amenities,
+    showAmenities,
+    travelGeojson
+  })
+  overlayRef.current = { experience: loaded, amenities, showAmenities, travelGeojson }
+
+  useEffect(() => {
+    const longitude = loaded?.projectCenter?.longitude
+    const latitude = loaded?.projectCenter?.latitude
+    if (!travelOn || longitude == null || latitude == null || !mapboxAccessToken) {
+      setTravelGeojson(null)
+      setTravelError(null)
+      return
+    }
+    const controller = new AbortController()
+    const url =
+      `https://api.mapbox.com/isochrone/v1/mapbox/${travelProfile}/` +
+      `${longitude},${latitude}?contours_minutes=${travelMinutes}` +
+      `&polygons=true&access_token=${encodeURIComponent(mapboxAccessToken)}`
+    void fetch(url, { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Isochrone request failed")
+        return (await response.json()) as GeoJSON.FeatureCollection
+      })
+      .then((collection) => {
+        setTravelGeojson(collection)
+        setTravelError(null)
+      })
+      .catch((err: unknown) => {
+        if (err instanceof Error && err.name === "AbortError") return
+        setTravelGeojson(null)
+        setTravelError("Travel times are unavailable")
+      })
+    return () => controller.abort()
+  }, [
+    travelOn,
+    travelProfile,
+    travelMinutes,
+    loaded?.projectCenter?.longitude,
+    loaded?.projectCenter?.latitude,
+    mapboxAccessToken
+  ])
+
+  useEffect(() => {
+    const source = mapRef.current?.getSource(ISO_SOURCE) as GeoJSONSource | undefined
+    source?.setData(travelGeojson ?? EMPTY_COLLECTION)
+  }, [travelGeojson, mapReady])
+
+  useEffect(() => {
+    if (!loaded) return
+    setPitchOn(loaded.map.initialCamera.pitch > 20)
+    setSatelliteOn(loaded.map.style.includes("satellite"))
+    setTravelOn(false)
+  }, [loaded?.projectId])
 
   const selectAmenity = (amenity: PublicAmenity, source: AmenitySelectSource) => {
     const payload = toAmenityPayload(amenity, source)
@@ -204,90 +427,9 @@ export function ProjectExperience({
       bearing: experience.map.initialCamera.bearing
     })
     map.addControl(new mapboxgl.NavigationControl({ visualizePitch: true }), "bottom-right")
-    map.on("load", () => {
-      if (experience.map.terrain) {
-        if (!map.getSource("mapbox-dem")) {
-          map.addSource("mapbox-dem", {
-            type: "raster-dem",
-            url: "mapbox://mapbox.mapbox-terrain-dem-v1",
-            tileSize: 512,
-            maxzoom: 14
-          })
-        }
-        map.setTerrain({
-          source: "mapbox-dem",
-          exaggeration: experience.map.terrainExaggeration || 1
-        })
-      }
-      map.addSource(LOT_SOURCE, {
-        type: "geojson",
-        data: experience.lots ?? { type: "FeatureCollection", features: [] }
-      })
-      map.addLayer({
-        id: LOT_LAYER,
-        type: "fill",
-        source: LOT_SOURCE,
-        layout: { visibility: experience.layers.lots ? "visible" : "none" },
-        paint: {
-          "fill-color": [
-            "match",
-            ["get", "status"],
-            "available",
-            "#15803d",
-            "sold",
-            "#64748b",
-            "reserved",
-            "#b45309",
-            "#1e293b"
-          ],
-          "fill-opacity": 0.55
-        }
-      })
-      map.addSource(AMENITY_SOURCE, { type: "geojson", data: amenities })
-      map.addLayer({
-        id: AMENITY_HALO_LAYER,
-        type: "circle",
-        source: AMENITY_SOURCE,
-        layout: { visibility: showAmenities ? "visible" : "none" },
-        paint: {
-          "circle-radius": HALO_START_RADIUS + HALO_GROWTH * 0.45,
-          "circle-color": "#38bdf8",
-          "circle-opacity": 0.22,
-          "circle-stroke-width": 0
-        }
-      })
-      map.addLayer({
-        id: AMENITY_LAYER,
-        type: "circle",
-        source: AMENITY_SOURCE,
-        layout: { visibility: showAmenities ? "visible" : "none" },
-        paint: {
-          "circle-radius": 8,
-          "circle-color": "#38bdf8",
-          "circle-stroke-width": 2,
-          "circle-stroke-color": "#0f172a"
-        }
-      })
-      const placements: StudioGlbPlacement[] = experience.assets
-        .filter((asset) => asset.type === "model_3d" && asset.url)
-        .map((asset) => ({
-          id: asset.id,
-          url: resolveMediaUrl(experience.apiOrigin, asset.url),
-          longitude: asset.position.longitude,
-          latitude: asset.position.latitude,
-          altitude: asset.position.altitude ?? 0,
-          scale: asset.transform.scale || 1,
-          rotation: [
-            asset.transform.rotation[0] ?? 0,
-            asset.transform.rotation[1] ?? 0,
-            asset.transform.rotation[2] ?? 0
-          ]
-        }))
-      if (experience.layers.models3D && placements.length > 0) {
-        const layer = ensureStudioGlbLayer(map, null)
-        glbRef.current = layer
-        void layer.syncPlacements(placements)
-      }
+    map.on("style.load", () => {
+      glbRef.current = null
+      mountExperienceLayers(map, overlayRef.current, glbRef)
     })
     map.on("click", (event: MapMouseEvent) => {
       const hits = map.queryRenderedFeatures(event.point, {
@@ -410,6 +552,43 @@ export function ProjectExperience({
     <div style={{ position: "relative", width: "100%", height: "100%", display: "flex", minHeight: 0 }}>
       <div style={{ position: "relative", flex: split ? "0 0 50%" : "1 1 auto", minWidth: 0 }}>
         <div ref={containerRef} style={{ position: "absolute", inset: 0 }} />
+        <MapOptions
+          projectCenter={loaded?.projectCenter ?? null}
+          pitchOn={pitchOn}
+          satelliteOn={satelliteOn}
+          travelOn={travelOn}
+          profile={travelProfile}
+          minutes={travelMinutes}
+          travelError={travelError}
+          onRecenter={() => {
+            const map = mapRef.current
+            const center = loaded?.projectCenter
+            if (!map || !center) return
+            map.flyTo({
+              center: [center.longitude, center.latitude],
+              zoom: Math.max(map.getZoom(), loaded?.map.initialCamera.zoom ?? 14),
+              duration: prefersReducedMotion() ? 0 : 700
+            })
+          }}
+          onPitchChange={(on) => {
+            setPitchOn(on)
+            mapRef.current?.easeTo({
+              pitch: on ? 60 : 0,
+              duration: prefersReducedMotion() ? 0 : 200
+            })
+          }}
+          onSatelliteChange={(on) => {
+            setSatelliteOn(on)
+            const map = mapRef.current
+            const published = loaded?.map.style
+            if (!map || !published) return
+            const offStyle = published.includes("satellite") ? STREETS_STYLE : published
+            map.setStyle(on ? SATELLITE_STYLE : offStyle)
+          }}
+          onTravelChange={setTravelOn}
+          onProfileChange={setTravelProfile}
+          onMinutesChange={setTravelMinutes}
+        />
         <div style={{ position: "absolute", top: 16, left: 16, display: "flex", gap: 8, zIndex: 2 }}>
           <button type="button" onClick={() => setShowAmenities((value) => !value)} style={buttonStyle(showAmenities)}>
             Amenities
