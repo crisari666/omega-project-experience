@@ -2,11 +2,21 @@ import React, { useEffect, useMemo, useRef, useState } from "react"
 import mapboxgl, { type GeoJSONSource, type Map, type MapMouseEvent } from "mapbox-gl"
 import "mapbox-gl/dist/mapbox-gl.css"
 import { AmenityDetail } from "./amenity-detail"
+import { categoryMarkerColor } from "./amenity-marker-color"
+import { applyRoadLayers } from "./road-layers"
+import { AmenityBrowser } from "./amenity-browser"
+import { AmenityHoverCard } from "./amenity-hover-card"
+import { PanoramaViewer } from "./panorama-viewer"
 import {
   MapOptions,
   type TravelMinutes,
   type TravelProfile
 } from "./map-options"
+import {
+  resolveMapOptionLabels,
+  type MapOptionLabels,
+  type MapOptionLocale
+} from "./map-option-labels"
 import { loadPublishedExperience, resolveMediaUrl } from "./load-published"
 import { playCameraMotion } from "./play-camera-motion"
 import {
@@ -15,11 +25,13 @@ import {
   type StudioGlbPlacement
 } from "./glb-layer"
 import type {
+  AmenityCategory,
   AmenitySelectPayload,
   AmenitySelectSource,
   ExperiencePlayerData,
   LotClickPayload,
-  PublicAmenity
+  PublicAmenity,
+  PublicAsset
 } from "./types"
 
 const LOT_SOURCE = "experience-lots"
@@ -60,6 +72,10 @@ export type ProjectExperienceProps = {
   scenePlaying?: boolean
   /** Pulse is the client default. Pass "none" to keep the dots still. */
   markerMotion?: "pulse" | "none"
+  /** Built-in Map Options copy. Default `en`. */
+  locale?: MapOptionLocale
+  /** Overrides any label from `locale`. Use this for a language the package does not ship. */
+  labels?: Partial<MapOptionLabels>
 }
 
 function representativePoint(
@@ -94,6 +110,7 @@ function toAmenityPayload(
     categoryKey: amenity.categoryKey,
     categoryLabel: amenity.categoryLabel,
     description: amenity.description,
+    subtitle: amenity.subtitle,
     gallery,
     distanceMeters: amenity.distanceMeters,
     estimatedTravelMinutes: amenity.estimatedTravelMinutes,
@@ -188,7 +205,7 @@ function mountExperienceLayers(
       layout: { visibility: amenityVisibility },
       paint: {
         "circle-radius": HALO_START_RADIUS + HALO_GROWTH * 0.45,
-        "circle-color": "#38bdf8",
+        "circle-color": ["coalesce", ["get", "color"], "#38BDF8"],
         "circle-opacity": 0.22,
         "circle-stroke-width": 0
       }
@@ -201,10 +218,21 @@ function mountExperienceLayers(
       source: AMENITY_SOURCE,
       layout: { visibility: amenityVisibility },
       paint: {
-        "circle-radius": 8,
-        "circle-color": "#38bdf8",
+        "circle-radius": ["case", ["boolean", ["feature-state", "hover"], false], 14, 8],
+        "circle-opacity": ["case", ["boolean", ["feature-state", "dim"], false], 0.28, 1],
+        "circle-color": [
+          "case",
+          ["boolean", ["feature-state", "hover"], false],
+          "#E07A3D",
+          ["coalesce", ["get", "color"], "#38BDF8"]
+        ],
         "circle-stroke-width": 2,
-        "circle-stroke-color": "#0f172a"
+        "circle-stroke-color": [
+          "case",
+          ["boolean", ["feature-state", "hover"], false],
+          "#E07A3D",
+          "#0f172a"
+        ]
       }
     })
   }
@@ -231,6 +259,36 @@ function mountExperienceLayers(
   if (map.getLayer(ISO_LAYER) && map.getLayer(LOT_LAYER)) {
     map.moveLayer(ISO_LAYER, LOT_LAYER)
   }
+  applyRoadLayers(
+    map,
+    experience.layers.roads !== false,
+    experience.map.roadsStyle
+  )
+}
+
+function lotBounds(
+  collection: GeoJSON.FeatureCollection | null
+): mapboxgl.LngLatBounds | null {
+  if (!collection?.features.length) return null
+  const bounds = new mapboxgl.LngLatBounds()
+  let found = false
+  const visit = (value: unknown): void => {
+    if (!Array.isArray(value) || value.length === 0) return
+    if (typeof value[0] === "number" && typeof value[1] === "number") {
+      const longitude = value[0]
+      const latitude = value[1]
+      if (!Number.isFinite(longitude) || !Number.isFinite(latitude)) return
+      bounds.extend([longitude, latitude])
+      found = true
+      return
+    }
+    for (const child of value) visit(child)
+  }
+  for (const feature of collection.features) {
+    const geometry = feature.geometry as { coordinates?: unknown } | null
+    visit(geometry?.coordinates)
+  }
+  return found ? bounds : null
 }
 
 function prefersReducedMotion(): boolean {
@@ -240,17 +298,26 @@ function prefersReducedMotion(): boolean {
   )
 }
 
-function amenityCollection(locations: readonly PublicAmenity[]): GeoJSON.FeatureCollection {
+function amenityCollection(
+  locations: readonly PublicAmenity[],
+  categories: readonly AmenityCategory[]
+): GeoJSON.FeatureCollection {
   return {
     type: "FeatureCollection",
     features: locations
       .map((location) => {
         const point = representativePoint(location.geometry)
         if (!point) return null
+        const categoryKey = location.categoryKey || "other"
         return {
           type: "Feature" as const,
           id: location.id,
-          properties: { id: location.id, name: location.name },
+          properties: {
+            id: location.id,
+            name: location.name,
+            categoryKey,
+            color: categoryMarkerColor(categories, categoryKey)
+          },
           geometry: {
             type: "Point" as const,
             coordinates: [point.longitude, point.latitude]
@@ -272,10 +339,18 @@ export function ProjectExperience({
   onAmenitySelect,
   activeSceneId = null,
   scenePlaying = false,
-  markerMotion = "pulse"
+  markerMotion = "pulse",
+  locale = "en",
+  labels
 }: ProjectExperienceProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const mapRef = useRef<Map | null>(null)
+  const pendingPanoramaReveal = useRef<(() => void) | null>(null)
+  const openPanoramaRef = useRef<(asset: PublicAsset) => void>(() => undefined)
+  const amenityRowsRef = useRef<readonly PublicAmenity[]>([])
+  const selectAmenityRef = useRef<
+    (amenity: PublicAmenity, source: AmenitySelectSource) => void
+  >(() => undefined)
   const glbRef = useRef<StudioGlbCustomLayer | null>(null)
   const [loaded, setLoaded] = useState<ExperiencePlayerData | null>(data ?? null)
   const [error, setError] = useState<string | null>(null)
@@ -283,6 +358,10 @@ export function ProjectExperience({
   const [showAmenities, setShowAmenities] = useState(amenitiesVisible ?? true)
   const [showNavigation, setShowNavigation] = useState(navigationVisible ?? false)
   const [selected, setSelected] = useState<AmenitySelectPayload | null>(null)
+  const [hoveredId, setHoveredId] = useState<string | null>(null)
+  const [openCategoryKey, setOpenCategoryKey] = useState<string | null>(null)
+  const [openPanorama, setOpenPanorama] = useState<PublicAsset | null>(null)
+  const [hoverPoint, setHoverPoint] = useState<{ x: number; y: number } | null>(null)
   const [isMobile, setIsMobile] = useState(
     typeof window !== "undefined" ? window.innerWidth < 900 : false
   )
@@ -297,6 +376,10 @@ export function ProjectExperience({
   const [travelError, setTravelError] = useState<string | null>(null)
   const onLotClickRef = useRef(onLotClick)
   const onAmenitySelectRef = useRef(onAmenitySelect)
+  const listHoverRef = useRef(false)
+  const hoveredIdRef = useRef<string | null>(null)
+  const showAmenitiesRef = useRef(showAmenities)
+  showAmenitiesRef.current = showAmenities
   onLotClickRef.current = onLotClick
   onAmenitySelectRef.current = onAmenitySelect
 
@@ -334,9 +417,16 @@ export function ProjectExperience({
     }
   }, [apiBaseUrl, data, projectId])
 
+  const amenityRows = loaded?.locations ?? []
+  const amenityCategories = loaded?.amenityCategories ?? []
   const amenities = useMemo(
-    () => amenityCollection(loaded?.locations ?? []),
-    [loaded?.locations]
+    () => amenityCollection(amenityRows, amenityCategories),
+    [amenityCategories, amenityRows]
+  )
+  amenityRowsRef.current = amenityRows
+  const optionLabels = useMemo(
+    () => resolveMapOptionLabels(locale, labels),
+    [labels, locale]
   )
   const overlayRef = useRef<OverlaySnap>({
     experience: loaded,
@@ -395,7 +485,50 @@ export function ProjectExperience({
     setTravelOn(false)
   }, [loaded?.projectId])
 
+  const openPanoramaAsset = (asset: PublicAsset) => {
+    const map = mapRef.current
+    const reveal = () => {
+      pendingPanoramaReveal.current = null
+      setOpenPanorama(asset)
+    }
+    if (!map || prefersReducedMotion()) {
+      reveal()
+      return
+    }
+    const center = map.getCenter()
+    const alreadyThere =
+      map.getZoom() >= 18 &&
+      Math.abs(center.lng - asset.position.longitude) < 0.00002 &&
+      Math.abs(center.lat - asset.position.latitude) < 0.00002
+    if (alreadyThere) {
+      reveal()
+      return
+    }
+    if (pendingPanoramaReveal.current) {
+      map.off("moveend", pendingPanoramaReveal.current)
+    }
+    pendingPanoramaReveal.current = reveal
+    map.once("moveend", reveal)
+    map.flyTo({
+      center: [asset.position.longitude, asset.position.latitude],
+      zoom: Math.max(map.getZoom(), 18),
+      pitch: map.getPitch(),
+      duration: 700
+    })
+  }
+  openPanoramaRef.current = openPanoramaAsset
   const selectAmenity = (amenity: PublicAmenity, source: AmenitySelectSource) => {
+    const panorama = (loaded?.assets ?? []).find(
+      (asset) =>
+        Boolean(amenity.panoramaAssetId) &&
+        asset.id === amenity.panoramaAssetId &&
+        asset.type === "panorama" &&
+        asset.url
+    )
+    if (panorama) {
+      openPanoramaAsset(panorama)
+      return
+    }
     const payload = toAmenityPayload(amenity, source)
     setSelected(payload)
     setShowAmenities(true)
@@ -405,10 +538,11 @@ export function ProjectExperience({
       map.flyTo({
         center: [payload.lngLat.longitude, payload.lngLat.latitude],
         zoom: Math.max(map.getZoom(), 16),
-        duration: 700
+        duration: prefersReducedMotion() ? 0 : 700
       })
     }
   }
+  selectAmenityRef.current = selectAmenity
 
   useEffect(() => {
     const container = containerRef.current
@@ -427,9 +561,50 @@ export function ProjectExperience({
       bearing: experience.map.initialCamera.bearing
     })
     map.addControl(new mapboxgl.NavigationControl({ visualizePitch: true }), "bottom-right")
+    let hasFittedLots = false
     map.on("style.load", () => {
       glbRef.current = null
       mountExperienceLayers(map, overlayRef.current, glbRef)
+      const activeHoverId = hoveredIdRef.current
+      if (activeHoverId && map.getSource(AMENITY_SOURCE)) {
+        map.setFeatureState(
+          { source: AMENITY_SOURCE, id: activeHoverId },
+          { hover: true }
+        )
+      }
+      if (hasFittedLots) return
+      hasFittedLots = true
+      const snap = overlayRef.current.experience
+      const bounds = lotBounds(snap?.lots ?? null)
+      if (!bounds || !snap) return
+      const width = map.getContainer().clientWidth
+      const panelLeft = Math.min(392, Math.floor(width * 0.45))
+      map.fitBounds(bounds, {
+        padding: {
+          top: 72,
+          right: 72,
+          bottom: 72,
+          left: showAmenitiesRef.current ? Math.max(72, panelLeft) : 72
+        },
+        maxZoom: 17,
+        pitch: snap.map.initialCamera.pitch,
+        bearing: snap.map.initialCamera.bearing,
+        duration: prefersReducedMotion() ? 0 : 700
+      })
+    })
+    map.on("mousemove", (event: MapMouseEvent) => {
+      if (listHoverRef.current || !map.getLayer(AMENITY_LAYER)) return
+      const hits = map.queryRenderedFeatures(event.point, {
+        layers: [AMENITY_LAYER].filter((id) => Boolean(map.getLayer(id)))
+      })
+      const nextId = hits[0]?.properties?.id ? String(hits[0].properties.id) : null
+      map.getCanvas().style.cursor = nextId ? "pointer" : ""
+      setHoveredId((current) => (current === nextId ? current : nextId))
+    })
+    map.on("mouseleave", () => {
+      if (listHoverRef.current) return
+      map.getCanvas().style.cursor = ""
+      setHoveredId(null)
     })
     map.on("click", (event: MapMouseEvent) => {
       const hits = map.queryRenderedFeatures(event.point, {
@@ -442,10 +617,10 @@ export function ProjectExperience({
           hit.layer?.id === AMENITY_LAYER || hit.layer?.id === AMENITY_HALO_LAYER
       )
       if (amenityHit?.properties?.id) {
-        const amenity = experience.locations.find(
+        const amenity = amenityRowsRef.current.find(
           (row) => row.id === String(amenityHit.properties?.id)
         )
-        if (amenity) selectAmenity(amenity, "map")
+        if (amenity) selectAmenityRef.current(amenity, "map")
         return
       }
       const lotHit = hits.find((hit) => hit.layer?.id === LOT_LAYER)
@@ -493,6 +668,12 @@ export function ProjectExperience({
     const map = mapRef.current
     if (!map?.getSource(AMENITY_SOURCE)) return
     ;(map.getSource(AMENITY_SOURCE) as GeoJSONSource).setData(amenities)
+    if (hoveredIdRef.current) {
+      map.setFeatureState(
+        { source: AMENITY_SOURCE, id: hoveredIdRef.current },
+        { hover: true }
+      )
+    }
     const visibility = showAmenities ? "visible" : "none"
     ;[AMENITY_LAYER, AMENITY_HALO_LAYER].forEach((layerId) => {
       if (map.getLayer(layerId)) {
@@ -500,6 +681,71 @@ export function ProjectExperience({
       }
     })
   }, [amenities, showAmenities])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map?.getSource(AMENITY_SOURCE)) return
+    const previous = hoveredIdRef.current
+    if (previous && previous !== hoveredId) {
+      map.setFeatureState({ source: AMENITY_SOURCE, id: previous }, { hover: false })
+    }
+    if (hoveredId) {
+      map.setFeatureState({ source: AMENITY_SOURCE, id: hoveredId }, { hover: true })
+    }
+    hoveredIdRef.current = hoveredId
+  }, [amenities, hoveredId, mapReady])
+
+  const activeCategoryKey = showAmenities ? openCategoryKey : null
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map?.getSource(AMENITY_SOURCE)) return
+    for (const feature of amenities.features) {
+      const featureId = feature.id
+      if (featureId == null) continue
+      const categoryKey = String(feature.properties?.categoryKey ?? "")
+      const dim = Boolean(activeCategoryKey) && categoryKey !== activeCategoryKey
+      map.setFeatureState({ source: AMENITY_SOURCE, id: featureId }, { dim })
+    }
+  }, [activeCategoryKey, amenities, mapReady])
+
+  const hoveredAmenity = amenityRows.find((row) => row.id === hoveredId) ?? null
+  const hoveredLngLat = hoveredAmenity
+    ? representativePoint(hoveredAmenity.geometry)
+    : null
+  const hoverLongitude = hoveredLngLat?.longitude
+  const hoverLatitude = hoveredLngLat?.latitude
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || hoverLongitude == null || hoverLatitude == null) {
+      setHoverPoint(null)
+      return
+    }
+    const place = () => {
+      const projected = map.project([hoverLongitude, hoverLatitude])
+      setHoverPoint({ x: projected.x, y: projected.y })
+    }
+    place()
+    map.on("move", place)
+    return () => {
+      map.off("move", place)
+    }
+  }, [hoverLatitude, hoverLongitude, mapReady])
+
+  useEffect(() => {
+    if (!hoveredId || hoverLongitude == null || hoverLatitude == null) return
+    const timer = window.setTimeout(() => {
+      const map = mapRef.current
+      if (!map) return
+      map.flyTo({
+        center: [hoverLongitude, hoverLatitude],
+        zoom: Math.max(map.getZoom(), 16),
+        duration: prefersReducedMotion() ? 0 : 700
+      })
+    }, 180)
+    return () => window.clearTimeout(timer)
+  }, [hoverLatitude, hoverLongitude, hoveredId])
 
   useEffect(() => {
     const map = mapRef.current
@@ -515,7 +761,11 @@ export function ProjectExperience({
           "circle-radius",
           HALO_START_RADIUS + HALO_GROWTH * 0.45
         )
-        map.setPaintProperty(AMENITY_HALO_LAYER, "circle-opacity", 0.22)
+        map.setPaintProperty(AMENITY_HALO_LAYER, "circle-opacity", [
+          "*",
+          0.22,
+          ["case", ["boolean", ["feature-state", "dim"], false], 0.28, 1]
+        ])
       }
       return
     }
@@ -529,11 +779,11 @@ export function ProjectExperience({
           "circle-radius",
           HALO_START_RADIUS + progress * HALO_GROWTH
         )
-        map.setPaintProperty(
-          AMENITY_HALO_LAYER,
-          "circle-opacity",
-          HALO_PEAK_OPACITY * (1 - progress)
-        )
+        map.setPaintProperty(AMENITY_HALO_LAYER, "circle-opacity", [
+          "*",
+          HALO_PEAK_OPACITY * (1 - progress),
+          ["case", ["boolean", ["feature-state", "dim"], false], 0.28, 1]
+        ])
       }
       frame = requestAnimationFrame(tick)
     }
@@ -546,20 +796,47 @@ export function ProjectExperience({
   }, [selected, isMobile])
 
   const detailOpen = Boolean(selected) && showAmenities
-  const split = detailOpen && !isMobile
 
   return (
     <div style={{ position: "relative", width: "100%", height: "100%", display: "flex", minHeight: 0 }}>
-      <div style={{ position: "relative", flex: split ? "0 0 50%" : "1 1 auto", minWidth: 0 }}>
+      <div style={{ position: "relative", flex: "1 1 auto", minWidth: 0 }}>
         <div ref={containerRef} style={{ position: "absolute", inset: 0 }} />
+        {hoveredAmenity && hoverPoint && !detailOpen && (
+          <div
+            style={{
+              position: "absolute",
+              left: hoverPoint.x,
+              top: hoverPoint.y,
+              transform: "translate(-50%, calc(-100% - 14px))",
+              zIndex: 4,
+              pointerEvents: "none"
+            }}
+          >
+            <AmenityHoverCard
+              name={hoveredAmenity.name}
+              category={
+                hoveredAmenity.subtitle ||
+                hoveredAmenity.categoryLabel ||
+                hoveredAmenity.categoryKey
+              }
+              imageUrl={
+                resolveMediaUrl(
+                  loaded?.apiOrigin ?? "",
+                  hoveredAmenity.media.cover ?? hoveredAmenity.media.gallery[0] ?? null
+                ) || null
+              }
+            />
+          </div>
+        )}
         <MapOptions
+          labels={optionLabels}
           projectCenter={loaded?.projectCenter ?? null}
           pitchOn={pitchOn}
           satelliteOn={satelliteOn}
           travelOn={travelOn}
           profile={travelProfile}
           minutes={travelMinutes}
-          travelError={travelError}
+          travelError={travelError ? optionLabels.travelError : null}
           onRecenter={() => {
             const map = mapRef.current
             const center = loaded?.projectCenter
@@ -598,25 +875,28 @@ export function ProjectExperience({
           </button>
         </div>
         {showAmenities && (
-          <aside style={listStyle}>
-            {(loaded?.locations ?? []).map((amenity) => (
-              <button
-                key={amenity.id}
-                type="button"
-                onClick={() => selectAmenity(amenity, "list")}
-                style={rowStyle(selected?.id === amenity.id)}
-              >
-                <strong>{amenity.name}</strong>
-                <span style={{ display: "block", color: "#94a3b8", fontSize: 12 }}>
-                  {amenity.categoryLabel || amenity.categoryKey}
-                </span>
-              </button>
-            ))}
-          </aside>
+          <AmenityBrowser
+            categories={amenityCategories}
+            locations={amenityRows}
+            apiOrigin={loaded?.apiOrigin ?? ""}
+            openKey={openCategoryKey}
+            onOpenChange={setOpenCategoryKey}
+            selectedId={selected?.id ?? null}
+            hoveredId={hoveredId}
+            onHover={(id) => {
+              listHoverRef.current = true
+              setHoveredId(id)
+            }}
+            onLeave={() => {
+              listHoverRef.current = false
+              setHoveredId(null)
+            }}
+            onSelect={(amenity) => selectAmenity(amenity, "list")}
+          />
         )}
         {showNavigation && (
-          <aside style={{ ...listStyle, left: showAmenities ? 236 : 16 }}>
-            {(loaded?.locations ?? []).map((amenity) => {
+          <aside style={{ ...listStyle, left: showAmenities ? 384 : 16 }}>
+            {amenityRows.map((amenity) => {
               const payload = toAmenityPayload(amenity, "list")
               const href = payload.lngLat
                 ? `https://www.google.com/maps/dir/?api=1${
@@ -626,7 +906,7 @@ export function ProjectExperience({
                   }&destination=${payload.lngLat.latitude},${payload.lngLat.longitude}`
                 : undefined
               return (
-                <a key={amenity.id} href={href} target="_blank" rel="noreferrer" style={rowStyle(false)}>
+                <a key={amenity.id} href={href} target="_blank" rel="noreferrer" style={rowStyle(false, false)}>
                   {amenity.name}
                 </a>
               )
@@ -636,39 +916,58 @@ export function ProjectExperience({
         {error && (
           <p style={{ position: "absolute", bottom: 16, left: 16, color: "#fecaca" }}>{error}</p>
         )}
+        {detailOpen && selected && loaded && (
+          <div
+            role="presentation"
+            onClick={() => setSelected(null)}
+            style={{
+              position: "absolute",
+              inset: 0,
+              zIndex: 5,
+              background: isMobile
+                ? "linear-gradient(to top, rgba(8,8,10,0.62) 0%, rgba(8,8,10,0.22) 48%, rgba(8,8,10,0) 100%)"
+                : "linear-gradient(to right, rgba(8,8,10,0.5) 0%, rgba(8,8,10,0.16) 46%, rgba(8,8,10,0) 72%)"
+            }}
+          >
+            <div
+              role="dialog"
+              aria-label={selected.name}
+              onClick={(event) => event.stopPropagation()}
+              style={{
+                position: "absolute",
+                left: isMobile ? 12 : 16,
+                right: isMobile ? 12 : "auto",
+                bottom: isMobile ? 12 : 16,
+                top: isMobile ? "auto" : 16,
+                width: isMobile ? "auto" : "min(420px, calc(100% - 32px))",
+                maxHeight: isMobile ? "72%" : "none",
+                borderRadius: 16,
+                overflow: "hidden",
+                border: "1px solid rgba(255,255,255,0.14)",
+                boxShadow: "0 18px 48px rgba(0,0,0,0.35)"
+              }}
+            >
+              <AmenityDetail
+                amenity={selected}
+                apiOrigin={loaded.apiOrigin}
+                projectCenter={loaded.projectCenter}
+                onClose={() => setSelected(null)}
+              />
+            </div>
+          </div>
+        )}
+        {openPanorama && loaded && (
+          <PanoramaViewer
+            imageUrl={openPanorama.url}
+            longitude={openPanorama.position.longitude}
+            latitude={openPanorama.position.latitude}
+            altitude={openPanorama.position.altitude}
+            headingDegrees={openPanorama.transform.rotation[1] ?? 0}
+            lots={loaded.lots}
+            onClose={() => setOpenPanorama(null)}
+          />
+        )}
       </div>
-      {split && selected && loaded && (
-        <div style={{ flex: "0 0 50%", minWidth: 0 }}>
-          <AmenityDetail
-            amenity={selected}
-            apiOrigin={loaded.apiOrigin}
-            projectCenter={loaded.projectCenter}
-            onClose={() => setSelected(null)}
-          />
-        </div>
-      )}
-      {detailOpen && isMobile && selected && loaded && (
-        <div
-          style={{
-            position: "absolute",
-            left: 16,
-            right: 16,
-            bottom: 16,
-            maxHeight: "70%",
-            zIndex: 3,
-            borderRadius: 16,
-            overflow: "hidden",
-            boxShadow: "0 16px 40px rgba(0,0,0,0.35)"
-          }}
-        >
-          <AmenityDetail
-            amenity={selected}
-            apiOrigin={loaded.apiOrigin}
-            projectCenter={loaded.projectCenter}
-            onClose={() => setSelected(null)}
-          />
-        </div>
-      )}
     </div>
   )
 }
@@ -698,13 +997,17 @@ const listStyle: React.CSSProperties = {
   zIndex: 2
 }
 
-function rowStyle(active: boolean): React.CSSProperties {
+function rowStyle(active: boolean, hovered: boolean): React.CSSProperties {
   return {
     display: "block",
     width: "100%",
     textAlign: "left",
     border: 0,
-    background: active ? "rgba(56,189,248,0.16)" : "transparent",
+    background: hovered
+      ? "rgba(224,122,61,0.22)"
+      : active
+        ? "rgba(56,189,248,0.16)"
+        : "transparent",
     color: "#e2e8f0",
     borderRadius: 8,
     padding: "8px 10px",
