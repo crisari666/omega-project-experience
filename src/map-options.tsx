@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from "react"
+import { formatMinutesAria, type MapOptionLabels } from "./map-option-labels"
 
 export type TravelProfile = "walking" | "cycling" | "driving"
 export type TravelMinutes = 10 | 20 | 30
 
 type Props = {
+  labels: MapOptionLabels
   projectCenter: { longitude: number; latitude: number } | null
   pitchOn: boolean
   satelliteOn: boolean
@@ -23,6 +25,7 @@ const COPPER = "#E07A3D"
 const INK = "#121417"
 
 export function MapOptions({
+  labels,
   projectCenter,
   pitchOn,
   satelliteOn,
@@ -49,7 +52,7 @@ export function MapOptions({
   return (
     <div style={clusterStyle}>
       {projectCenter && (
-        <button type="button" aria-label="Recenter on project" onClick={onRecenter} style={iconButtonStyle}>
+        <button type="button" aria-label={labels.recenter} onClick={onRecenter} style={iconButtonStyle}>
           <CrosshairIcon />
         </button>
       )}
@@ -61,18 +64,18 @@ export function MapOptions({
         style={optionsButtonStyle(open)}
       >
         <MapFoldIcon />
-        Map Options
+        {labels.mapOptions}
       </button>
       {open && (
-        <div id="experience-map-options" role="dialog" aria-label="Map options" style={panelStyle}>
-          <button type="button" aria-label="Close map options" onClick={() => setOpen(false)} style={closeStyle}>
+        <div id="experience-map-options" role="dialog" aria-label={labels.mapOptions} style={panelStyle}>
+          <button type="button" aria-label={labels.close} onClick={() => setOpen(false)} style={closeStyle}>
             <CloseIcon />
           </button>
-          <ToggleRow label="3D Map View" checked={pitchOn} onChange={onPitchChange} />
-          <ToggleRow label="Satellite View" checked={satelliteOn} onChange={onSatelliteChange} />
+          <ToggleRow label={labels.view3d} checked={pitchOn} onChange={onPitchChange} />
+          <ToggleRow label={labels.satellite} checked={satelliteOn} onChange={onSatelliteChange} />
           <div style={ruleStyle} />
           <ToggleRow
-            label="Show Travel Times"
+            label={labels.travelTimes}
             checked={travelOn}
             disabled={!projectCenter}
             onChange={onTravelChange}
@@ -80,40 +83,43 @@ export function MapOptions({
           <div style={groupStyle(travelOn && Boolean(projectCenter))} aria-disabled={!travelOn || !projectCenter}>
             <div style={segmentRowStyle}>
               <SegmentButton
-                label="Walking"
+                label={labels.walking}
                 active={profile === "walking"}
                 disabled={!travelOn}
                 onClick={() => onProfileChange("walking")}
               >
                 <WalkIcon />
+                <span>{labels.walking}</span>
               </SegmentButton>
               <SegmentButton
-                label="Cycling"
+                label={labels.cycling}
                 active={profile === "cycling"}
                 disabled={!travelOn}
                 onClick={() => onProfileChange("cycling")}
               >
                 <BikeIcon />
+                <span>{labels.cycling}</span>
               </SegmentButton>
               <SegmentButton
-                label="Driving"
+                label={labels.driving}
                 active={profile === "driving"}
                 disabled={!travelOn}
                 onClick={() => onProfileChange("driving")}
               >
                 <CarIcon />
+                <span>{labels.driving}</span>
               </SegmentButton>
             </div>
             <div style={segmentRowStyle}>
               {([10, 20, 30] as const).map((value) => (
                 <SegmentButton
                   key={value}
-                  label={`${value} minutes`}
+                  label={formatMinutesAria(labels.minutesAria, value)}
                   active={minutes === value}
                   disabled={!travelOn}
                   onClick={() => onMinutesChange(value)}
                 >
-                  {value} MIN
+                  {value} {labels.minutesSuffix}
                 </SegmentButton>
               ))}
             </div>
@@ -382,10 +388,13 @@ const segmentRowStyle: React.CSSProperties = {
 
 function segmentStyle(active: boolean): React.CSSProperties {
   return {
-    height: 40,
+    minHeight: 40,
     display: "inline-flex",
+    flexDirection: "column",
     alignItems: "center",
     justifyContent: "center",
+    gap: 2,
+    padding: "6px 4px",
     borderRadius: 8,
     border: `1px solid ${active ? COPPER : "rgba(224,122,61,0.35)"}`,
     background: active ? "rgba(224,122,61,0.16)" : "transparent",

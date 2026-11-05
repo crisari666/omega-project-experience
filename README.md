@@ -48,6 +48,8 @@ export function ProjectMap() {
 | `onLotClick` | Lot polygon click. No checkout UI |
 | `onAmenitySelect` | Amenity picked from the map or the list (`source`) |
 | `markerMotion` | `"pulse"` (default) or `"none"` |
+| `locale` | Map Options language. `"en"` (default) or `"es"` |
+| `labels` | Partial overrides for Map Options copy. Use this for a language the package does not ship |
 | `amenitiesVisible` | Initial amenities list visibility |
 | `navigationVisible` | Initial directions list visibility |
 | `activeSceneId` | Scene to fly to |
