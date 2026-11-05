@@ -41,6 +41,7 @@ export async function loadPublishedExperience(params: {
     map: manifest.map,
     layers: {
       lots: manifest.layers.lots,
+      roads: manifest.layers.roads,
       locations: manifest.layers.locations,
       models3D: manifest.layers.models3D
     },

@@ -1,3 +1,9 @@
+export type RoadsStyle = {
+  color: string
+  width: number
+  opacity: number
+}
+
 export type ExperienceCamera = {
   longitude: number
   latitude: number
@@ -10,6 +16,7 @@ export type AmenityCategory = {
   key: string
   label: string
   sortOrder: number
+  color?: string
 }
 
 export type AmenityMedia = {
@@ -22,8 +29,10 @@ export type PublicAmenity = {
   id: string
   name: string
   description: string
+  subtitle: string
   categoryKey: string
   categoryLabel: string
+  panoramaAssetId?: string
   geometry: {
     type: "Point" | "LineString" | "Polygon"
     coordinates: unknown
@@ -65,10 +74,12 @@ export type ExperiencePlayerData = {
     terrainExaggeration: number
     buildings3D: boolean
     fog: boolean
+    roadsStyle?: RoadsStyle
     initialCamera: ExperienceCamera
   }
   layers: {
     lots: boolean
+    roads?: boolean
     locations: boolean
     models3D: boolean
   }
@@ -98,6 +109,7 @@ export type AmenitySelectPayload = {
   categoryKey: string
   categoryLabel: string
   description: string
+  subtitle?: string
   gallery: readonly string[]
   distanceMeters: number | null
   estimatedTravelMinutes: number | null
