@@ -39,10 +39,10 @@ const LOT_LAYER = "experience-lots-fill"
 const AMENITY_SOURCE = "experience-amenities"
 const AMENITY_LAYER = "experience-amenities-point"
 const AMENITY_HALO_LAYER = "experience-amenities-halo"
-const PULSE_DURATION_MS = 1800
-const HALO_START_RADIUS = 8
-const HALO_GROWTH = 16
-const HALO_PEAK_OPACITY = 0.38
+const PULSE_DURATION_MS = 1100
+const HALO_START_RADIUS = 10
+const HALO_GROWTH = 26
+const HALO_PEAK_OPACITY = 0.85
 const ISO_SOURCE = "experience-isochrone"
 const ISO_LAYER = "experience-isochrone-fill"
 const SATELLITE_STYLE = "mapbox://styles/mapbox/satellite-streets-v12"
@@ -204,7 +204,7 @@ function mountExperienceLayers(
       source: AMENITY_SOURCE,
       layout: { visibility: amenityVisibility },
       paint: {
-        "circle-radius": HALO_START_RADIUS + HALO_GROWTH * 0.45,
+        "circle-radius": HALO_START_RADIUS,
         "circle-color": ["coalesce", ["get", "color"], "#38BDF8"],
         "circle-opacity": 0.22,
         "circle-stroke-width": 0
@@ -759,7 +759,7 @@ export function ProjectExperience({
         map.setPaintProperty(
           AMENITY_HALO_LAYER,
           "circle-radius",
-          HALO_START_RADIUS + HALO_GROWTH * 0.45
+          HALO_START_RADIUS
         )
         map.setPaintProperty(AMENITY_HALO_LAYER, "circle-opacity", [
           "*",
