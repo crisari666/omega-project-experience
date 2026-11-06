@@ -21,11 +21,33 @@ export const EMPTY_ROUTE: GeoJSON.FeatureCollection = {
  */
 const routeSourcesWithMetrics = new WeakSet<Map>()
 
+function sourceUsesLineMetrics(map: Map): boolean {
+  if (routeSourcesWithMetrics.has(map)) return true
+  const source = map.getSource(ROUTE_SOURCE) as { lineMetrics?: boolean } | undefined
+  return source?.lineMetrics === true
+}
+
+function setRouteTrim(map: Map, trim: readonly [number, number]): boolean {
+  if (!map.getLayer(ROUTE_LINE_LAYER)) return false
+  try {
+    map.setPaintProperty(ROUTE_LINE_LAYER, "line-trim-offset", [...trim])
+    return true
+  } catch {
+    try {
+      map.setPaintProperty(ROUTE_LINE_LAYER, "line-trim-offset", [1, 1])
+    } catch {
+      // The stroke stays fully visible when trim is unsupported.
+    }
+    return false
+  }
+}
+
 export function ensureRouteLayers(map: Map): void {
-  if (map.getSource(ROUTE_SOURCE) && !routeSourcesWithMetrics.has(map)) {
+  if (map.getSource(ROUTE_SOURCE) && !sourceUsesLineMetrics(map)) {
     if (map.getLayer(ROUTE_LINE_LAYER)) map.removeLayer(ROUTE_LINE_LAYER)
     if (map.getLayer(ROUTE_TRACK_LAYER)) map.removeLayer(ROUTE_TRACK_LAYER)
     map.removeSource(ROUTE_SOURCE)
+    routeSourcesWithMetrics.delete(map)
   }
   if (!map.getSource(ROUTE_SOURCE)) {
     map.addSource(ROUTE_SOURCE, {
@@ -58,7 +80,7 @@ export function ensureRouteLayers(map: Map): void {
         "line-color": DEFAULT_ROUTE_COLOR,
         "line-width": 4,
         "line-opacity": 1,
-        "line-trim-offset": [0, 1]
+        "line-trim-offset": [1, 1]
       }
     })
   }
@@ -168,17 +190,18 @@ export function paintRouteLine(params: {
   const showFull =
     params.reducedMotion || params.collection.features.length === 0
   if (showFull) {
-    params.map.setPaintProperty(ROUTE_LINE_LAYER, "line-trim-offset", [1, 1])
+    setRouteTrim(params.map, [1, 1])
     return
   }
   const startedAt = performance.now()
   const tick = (now: number): void => {
     if (params.signal.aborted || !params.map.getLayer(ROUTE_LINE_LAYER)) return
     const progress = Math.min(1, (now - startedAt) / ROUTE_PAINT_MS)
-    params.map.setPaintProperty(ROUTE_LINE_LAYER, "line-trim-offset", [progress, 1])
+    const painted = setRouteTrim(params.map, [progress, 1])
+    if (!painted) return
     if (progress < 1) requestAnimationFrame(tick)
   }
-  params.map.setPaintProperty(ROUTE_LINE_LAYER, "line-trim-offset", [0, 1])
+  if (!setRouteTrim(params.map, [0, 1])) return
   requestAnimationFrame(tick)
 }
 
