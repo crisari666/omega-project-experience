@@ -39,6 +39,70 @@ function resolveRoadsStyle(style?: Partial<RoadsStyle> | null): RoadsStyle {
   }
 }
 
+export type RoadLineStyle = "solid" | "double" | "dashed"
+
+export function resolveRoadLine(line: string | undefined): RoadLineStyle {
+  if (line === "double" || line === "dashed") return line
+  return "solid"
+}
+
+const ROAD_DASH: number[] = [2, 1.5]
+
+function isCasingLayer(layer: AnyLayer): boolean {
+  return layer.id.toLowerCase().includes("casing")
+}
+
+function clearRoadDash(map: Map, layerId: string): void {
+  try {
+    map.setPaintProperty(layerId, "line-dasharray", null as unknown as number[])
+  } catch {
+    try {
+      map.setPaintProperty(layerId, "line-dasharray", [1, 0])
+    } catch {
+      // This layer does not accept a dash.
+    }
+  }
+}
+
+/**
+ * Solid hides the casing. Double keeps today's outline. Dashed is one broken line.
+ */
+export function applyRoadLineStyle(
+  map: Map,
+  lineStyle: RoadLineStyle,
+  roadsVisible: boolean
+): void {
+  if (!roadsVisible) return
+  for (const layer of listRoadLayers(map)) {
+    if (layer.type !== "line" || !map.getLayer(layer.id)) continue
+    const casing = isCasingLayer(layer)
+    if (lineStyle === "double") {
+      map.setLayoutProperty(layer.id, "visibility", "visible")
+      clearRoadDash(map, layer.id)
+      continue
+    }
+    if (casing) {
+      map.setLayoutProperty(layer.id, "visibility", "none")
+      continue
+    }
+    map.setLayoutProperty(layer.id, "visibility", "visible")
+    try {
+      map.setPaintProperty(layer.id, "line-gap-width", 0)
+    } catch {
+      // Fill lines often have no gap.
+    }
+    if (lineStyle === "dashed") {
+      try {
+        map.setPaintProperty(layer.id, "line-dasharray", ROAD_DASH)
+      } catch {
+        // This layer does not accept a dash.
+      }
+      continue
+    }
+    clearRoadDash(map, layer.id)
+  }
+}
+
 function buildLineWidth(baseWidth: number): ExpressionSpecification {
   const at10 = Math.max(0.8, baseWidth * 0.45)
   const at14 = baseWidth

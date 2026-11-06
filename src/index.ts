@@ -7,6 +7,8 @@ export {
 } from "./map-option-labels"
 export type { MapOptionLabels, MapOptionLocale } from "./map-option-labels"
 export { loadPublishedExperience } from "./load-published"
+export { applyRoadLineStyle, resolveRoadLine } from "./road-layers"
+export type { RoadLineStyle } from "./road-layers"
 export {
   playCameraMotion,
   tourTurnFromBearings

@@ -71,6 +71,7 @@ export function MapOptions({
           <button type="button" aria-label={labels.close} onClick={() => setOpen(false)} style={closeStyle}>
             <CloseIcon />
           </button>
+          <div style={panelScrollStyle}>
           <ToggleRow label={labels.view3d} checked={pitchOn} onChange={onPitchChange} />
           <ToggleRow label={labels.satellite} checked={satelliteOn} onChange={onSatelliteChange} />
           <div style={ruleStyle} />
@@ -129,6 +130,7 @@ export function MapOptions({
               {travelError}
             </p>
           )}
+          </div>
         </div>
       )}
     </div>
@@ -294,12 +296,20 @@ const panelStyle: React.CSSProperties = {
   top: 50,
   right: 0,
   width: "min(280px, calc(100vw - 32px))",
-  padding: "28px 16px 16px",
+  maxHeight: "calc(100vh - 90px)",
+  display: "flex",
+  flexDirection: "column",
+  padding: "36px 0 8px",
   borderRadius: 12,
   background: "#1c1c1f",
   color: COPPER,
   boxShadow: "0 16px 40px rgba(0,0,0,0.35)",
   border: "1px solid rgba(255,255,255,0.08)"
+}
+
+const panelScrollStyle: React.CSSProperties = {
+  overflowY: "auto",
+  padding: "0 16px 8px"
 }
 
 const closeStyle: React.CSSProperties = {
