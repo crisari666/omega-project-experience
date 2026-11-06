@@ -86,6 +86,53 @@ const EMPTY_COLLECTION: GeoJSON.FeatureCollection = {
   features: []
 }
 
+const FRAME_EDGE = 72
+const LIST_COVER_LEFT = 392
+const DETAIL_COVER_LEFT = 452
+const MOBILE_DETAIL_BOTTOM_RATIO = 0.4
+
+type RouteFrameCover = "detail" | "list" | "none"
+
+function routeFramePadding(
+  map: Map,
+  cover: RouteFrameCover,
+  isMobile: boolean
+): { top: number; right: number; bottom: number; left: number } {
+  const width = map.getContainer().clientWidth
+  const height = map.getContainer().clientHeight
+  if (cover === "detail" && isMobile) {
+    return {
+      top: FRAME_EDGE,
+      right: FRAME_EDGE,
+      bottom: Math.max(FRAME_EDGE, Math.round(height * MOBILE_DETAIL_BOTTOM_RATIO)),
+      left: FRAME_EDGE
+    }
+  }
+  if (cover === "detail") {
+    return {
+      top: FRAME_EDGE,
+      right: FRAME_EDGE,
+      bottom: FRAME_EDGE,
+      left: Math.max(FRAME_EDGE, Math.min(DETAIL_COVER_LEFT, width - 48))
+    }
+  }
+  if (cover === "list") {
+    const panelLeft = Math.min(LIST_COVER_LEFT, Math.floor(width * 0.45))
+    return {
+      top: FRAME_EDGE,
+      right: FRAME_EDGE,
+      bottom: FRAME_EDGE,
+      left: Math.max(FRAME_EDGE, panelLeft)
+    }
+  }
+  return {
+    top: FRAME_EDGE,
+    right: FRAME_EDGE,
+    bottom: FRAME_EDGE,
+    left: FRAME_EDGE
+  }
+}
+
 type OverlaySnap = {
   experience: ExperiencePlayerData | null
   amenities: GeoJSON.FeatureCollection
@@ -488,7 +535,7 @@ export function ProjectExperience({
   const routeAbortRef = useRef<AbortController | null>(null)
   const routeAmenityIdRef = useRef<string | null>(null)
   const showPlaceRouteRef = useRef<
-    (amenity: PublicAmenity, moveCamera: boolean) => void
+    (amenity: PublicAmenity, moveCamera: boolean, cover?: "detail" | "list") => void
   >(() => undefined)
   const [loaded, setLoaded] = useState<ExperiencePlayerData | null>(data ?? null)
   const [error, setError] = useState<string | null>(null)
@@ -683,7 +730,11 @@ export function ProjectExperience({
     })
   }
   openPanoramaRef.current = openPanoramaAsset
-  const showPlaceRoute = (amenity: PublicAmenity, moveCamera: boolean): void => {
+  const showPlaceRoute = (
+    amenity: PublicAmenity,
+    moveCamera: boolean,
+    requestedCover: "detail" | "list" = "list"
+  ): void => {
     const map = mapRef.current
     if (!map) return
     routeAmenityIdRef.current = amenity.id
@@ -693,22 +744,31 @@ export function ProjectExperience({
     const place = representativePoint(amenity.geometry)
     const reducedMotion = prefersReducedMotion()
     if (moveCamera && place) {
-      flightTokenRef.current += 1
-      const flightToken = flightTokenRef.current
-      cameraMovingRef.current = true
-      const finishFlight = (): void => {
-        if (flightTokenRef.current !== flightToken) return
-        cameraMovingRef.current = false
-      }
-      map.once("moveend", finishFlight)
-      window.setTimeout(finishFlight, reducedMotion ? 0 : 800)
-      frameProjectAndPlace({
+      const cover: RouteFrameCover =
+        requestedCover === "detail" || selected != null
+          ? "detail"
+          : showAmenities
+            ? "list"
+            : "none"
+      const moved = frameProjectAndPlace({
         map,
         project: loaded?.projectCenter ?? null,
         place,
         route: amenity.route,
+        padding: routeFramePadding(map, cover, isMobile),
         reducedMotion
       })
+      if (moved) {
+        flightTokenRef.current += 1
+        const flightToken = flightTokenRef.current
+        cameraMovingRef.current = true
+        const finishFlight = (): void => {
+          if (flightTokenRef.current !== flightToken) return
+          cameraMovingRef.current = false
+        }
+        map.once("moveend", finishFlight)
+        window.setTimeout(finishFlight, reducedMotion ? 0 : 800)
+      }
     }
     routeAbortRef.current?.abort()
     const controller = new AbortController()
@@ -758,7 +818,7 @@ export function ProjectExperience({
     setSelected(payload)
     setShowAmenities(true)
     onAmenitySelectRef.current?.(payload)
-    if (payload.lngLat) showPlaceRoute(amenity, true)
+    if (payload.lngLat) showPlaceRoute(amenity, true, "detail")
   }
   selectAmenityRef.current = selectAmenity
 
@@ -1000,7 +1060,7 @@ export function ProjectExperience({
     }
     const amenity = amenityRowsRef.current.find((row) => row.id === hoveredId)
     if (!amenity) return
-    showPlaceRouteRef.current(amenity, true)
+    showPlaceRouteRef.current(amenity, true, "list")
   }, [hoverLatitude, hoverLongitude, hoveredId])
 
   useEffect(() => {
