@@ -6,10 +6,50 @@ type Props = {
   amenity: AmenitySelectPayload
   apiOrigin: string
   projectCenter: { longitude: number; latitude: number } | null
+  googleMapsApiKey?: string
   onClose: () => void
 }
 
 const RUST = "#C4532A"
+
+function bearingDegrees(
+  origin: { longitude: number; latitude: number },
+  target: { longitude: number; latitude: number }
+): number {
+  const originLat = (origin.latitude * Math.PI) / 180
+  const targetLat = (target.latitude * Math.PI) / 180
+  const deltaLng = ((target.longitude - origin.longitude) * Math.PI) / 180
+  const y = Math.sin(deltaLng) * Math.cos(targetLat)
+  const x =
+    Math.cos(originLat) * Math.sin(targetLat) -
+    Math.sin(originLat) * Math.cos(targetLat) * Math.cos(deltaLng)
+  return (Math.atan2(y, x) * 180) / Math.PI
+}
+
+function streetViewHeading(
+  amenity: AmenitySelectPayload,
+  projectCenter: { longitude: number; latitude: number } | null
+): number {
+  if (!amenity.lngLat || !projectCenter) return 0
+  const heading = bearingDegrees(projectCenter, amenity.lngLat)
+  return (heading + 360) % 360
+}
+
+function streetViewUrl(params: {
+  amenity: AmenitySelectPayload
+  projectCenter: { longitude: number; latitude: number } | null
+  googleMapsApiKey?: string
+}): string | null {
+  const point = params.amenity.lngLat
+  if (!point || params.amenity.category !== "town") return null
+  const heading = Math.round(streetViewHeading(params.amenity, params.projectCenter))
+  const location = `${point.latitude},${point.longitude}`
+  const key = params.googleMapsApiKey?.trim() ?? ""
+  if (key) {
+    return `https://www.google.com/maps/embed/v1/streetview?key=${encodeURIComponent(key)}&location=${location}&heading=${heading}&pitch=0&fov=80`
+  }
+  return `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${location}&heading=${heading}&pitch=0&fov=80`
+}
 
 function directionsUrl(
   amenity: AmenitySelectPayload,
@@ -27,6 +67,7 @@ export function AmenityDetail({
   amenity,
   apiOrigin,
   projectCenter,
+  googleMapsApiKey,
   onClose
 }: Props) {
   const gallery = amenity.gallery
@@ -34,6 +75,8 @@ export function AmenityDetail({
     .filter((url) => url.length > 0)
   const [activeIndex, setActiveIndex] = useState(0)
   const directions = directionsUrl(amenity, projectCenter)
+  const streetView = streetViewUrl({ amenity, projectCenter, googleMapsApiKey })
+  const streetViewEmbedded = Boolean(googleMapsApiKey?.trim()) && Boolean(streetView)
   const category = amenity.categoryLabel || amenity.categoryKey
   const hero = gallery[activeIndex] ?? gallery[0]
   const hasSeveral = gallery.length > 1
@@ -132,6 +175,21 @@ export function AmenityDetail({
       <div style={copyStyle}>
         {category && <p style={categoryStyle}>{category}</p>}
         <h2 style={titleStyle}>{amenity.name}</h2>
+        {streetView && streetViewEmbedded && (
+          <iframe
+            title="Street View"
+            src={streetView}
+            style={streetViewFrameStyle}
+            loading="lazy"
+            referrerPolicy="no-referrer-when-downgrade"
+            allowFullScreen
+          />
+        )}
+        {streetView && !streetViewEmbedded && (
+          <a href={streetView} target="_blank" rel="noreferrer" style={directionsStyle}>
+            Street View
+          </a>
+        )}
         {amenity.subtitle && <p style={subtitleStyle}>{amenity.subtitle}</p>}
         {(amenity.distanceMeters != null || amenity.estimatedTravelMinutes != null) && (
           <p style={metaStyle}>
@@ -309,6 +367,14 @@ const bodyStyle: React.CSSProperties = {
   lineHeight: 1.55,
   whiteSpace: "pre-wrap",
   color: "#f5f5f4"
+}
+
+const streetViewFrameStyle: React.CSSProperties = {
+  width: "100%",
+  height: 220,
+  border: 0,
+  borderRadius: 12,
+  background: "#111"
 }
 
 const directionsStyle: React.CSSProperties = {

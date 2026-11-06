@@ -2,6 +2,7 @@ export type RoadsStyle = {
   color: string
   width: number
   opacity: number
+  line?: "solid" | "double" | "dashed"
 }
 
 export type ExperienceCamera = {
@@ -25,20 +26,36 @@ export type AmenityMedia = {
   video: string | null
 }
 
+export type PlaceRoute = {
+  profile: "driving"
+  distanceMeters: number
+  durationSeconds: number
+  geometry: {
+    type: "LineString"
+    coordinates: readonly (readonly number[])[]
+  }
+}
+
 export type PublicAmenity = {
   id: string
   name: string
   description: string
   subtitle: string
+  category: string
   categoryKey: string
   categoryLabel: string
   panoramaAssetId?: string
+  linkedAssetId?: string
+  linkedResourceId?: string
+  routeColor?: string
+  routeLine?: "solid" | "double" | "dashed"
   geometry: {
     type: "Point" | "LineString" | "Polygon"
     coordinates: unknown
   }
   distanceMeters: number | null
   estimatedTravelMinutes: number | null
+  route?: PlaceRoute | null
   media: AmenityMedia
 }
 
@@ -106,6 +123,7 @@ export type AmenitySelectSource = "map" | "list"
 export type AmenitySelectPayload = {
   id: string
   name: string
+  category: string
   categoryKey: string
   categoryLabel: string
   description: string

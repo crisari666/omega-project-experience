@@ -3,7 +3,7 @@ import mapboxgl, { type GeoJSONSource, type Map, type MapMouseEvent } from "mapb
 import "mapbox-gl/dist/mapbox-gl.css"
 import { AmenityDetail } from "./amenity-detail"
 import { categoryMarkerColor } from "./amenity-marker-color"
-import { applyRoadLayers } from "./road-layers"
+import { applyRoadLayers, applyRoadLineStyle, resolveRoadLine } from "./road-layers"
 import { AmenityBrowser } from "./amenity-browser"
 import { AmenityHoverCard } from "./amenity-hover-card"
 import { PanoramaViewer } from "./panorama-viewer"
@@ -20,6 +20,15 @@ import {
 import { loadPublishedExperience, resolveMediaUrl } from "./load-published"
 import { playCameraMotion } from "./play-camera-motion"
 import {
+  clearRouteLine,
+  applyRouteAppearance,
+  ensureRouteLayers,
+  frameProjectAndPlace,
+  paintRouteLine,
+  routeCollection
+} from "./route-line"
+import {
+  STUDIO_GLB_LAYER_ID,
   ensureStudioGlbLayer,
   type StudioGlbCustomLayer,
   type StudioGlbPlacement
@@ -39,6 +48,7 @@ const LOT_LAYER = "experience-lots-fill"
 const AMENITY_SOURCE = "experience-amenities"
 const AMENITY_LAYER = "experience-amenities-point"
 const AMENITY_HALO_LAYER = "experience-amenities-halo"
+const SOURCE_HIT_PX = 28
 const PULSE_DURATION_MS = 1100
 const HALO_START_RADIUS = 10
 const HALO_GROWTH = 26
@@ -63,6 +73,8 @@ export type ProjectExperienceProps = {
   projectId: string
   apiBaseUrl?: string
   mapboxAccessToken: string
+  /** Google Maps Embed API key. Town places use it for the Street View frame. */
+  googleMapsApiKey?: string
   data?: ExperiencePlayerData
   amenitiesVisible?: boolean
   navigationVisible?: boolean
@@ -96,6 +108,48 @@ function representativePoint(
   return { longitude: Number(mid[0]), latitude: Number(mid[1]) }
 }
 
+function nearestLinkedPlace(
+  map: Map,
+  point: { x: number; y: number },
+  places: readonly PublicAmenity[],
+  assets: readonly PublicAsset[]
+): PublicAmenity | null {
+  let best: { place: PublicAmenity; distance: number } | null = null
+  for (const place of places) {
+    const target = linkedHitTarget(place, assets)
+    if (!target) continue
+    const projected = map.project([target.longitude, target.latitude])
+    const distance = Math.hypot(projected.x - point.x, projected.y - point.y)
+    if (distance > SOURCE_HIT_PX) continue
+    if (!best || distance < best.distance) best = { place, distance }
+  }
+  return best?.place ?? null
+}
+
+function linkedHitTarget(
+  place: PublicAmenity,
+  assets: readonly PublicAsset[]
+): { longitude: number; latitude: number } | null {
+  if (place.linkedResourceId) {
+    const point = representativePoint(place.geometry)
+    if (
+      !point ||
+      !Number.isFinite(point.longitude) ||
+      !Number.isFinite(point.latitude)
+    ) {
+      return null
+    }
+    return point
+  }
+  if (!place.linkedAssetId) return null
+  const asset = assets.find((row) => row.id === place.linkedAssetId)
+  if (!asset) return null
+  return {
+    longitude: asset.position.longitude,
+    latitude: asset.position.latitude
+  }
+}
+
 function toAmenityPayload(
   amenity: PublicAmenity,
   source: AmenitySelectSource
@@ -107,6 +161,7 @@ function toAmenityPayload(
   return {
     id: amenity.id,
     name: amenity.name,
+    category: amenity.category ?? "",
     categoryKey: amenity.categoryKey,
     categoryLabel: amenity.categoryLabel,
     description: amenity.description,
@@ -119,11 +174,81 @@ function toAmenityPayload(
   }
 }
 
-function mountExperienceLayers(
+function modelPlacementKey(experience: ExperiencePlayerData | null): string {
+  if (!experience?.layers.models3D) return ""
+  return experience.assets
+    .filter((asset) => asset.type === "model_3d" && asset.url)
+    .map((asset) =>
+      [
+        asset.id,
+        experience.apiOrigin,
+        asset.url,
+        asset.position.longitude,
+        asset.position.latitude,
+        asset.position.altitude ?? 0,
+        asset.transform.scale || 1,
+        asset.transform.rotation[0] ?? 0,
+        asset.transform.rotation[1] ?? 0,
+        asset.transform.rotation[2] ?? 0
+      ].join(":")
+    )
+    .join("|")
+}
+
+function collectModelPlacements(
+  experience: ExperiencePlayerData
+): StudioGlbPlacement[] {
+  return experience.assets
+    .filter((asset) => asset.type === "model_3d" && asset.url)
+    .map((asset) => ({
+      id: asset.id,
+      url: resolveMediaUrl(experience.apiOrigin, asset.url),
+      longitude: asset.position.longitude,
+      latitude: asset.position.latitude,
+      altitude: asset.position.altitude ?? 0,
+      scale: asset.transform.scale || 1,
+      rotation: [
+        asset.transform.rotation[0] ?? 0,
+        asset.transform.rotation[1] ?? 0,
+        asset.transform.rotation[2] ?? 0
+      ] as [number, number, number]
+    }))
+    .filter((placement) => placement.url.length > 0)
+}
+
+function syncExperienceModels(
   map: Map,
   snap: OverlaySnap,
   glbRef: { current: StudioGlbCustomLayer | null }
 ): void {
+  const experience = snap.experience
+  if (!experience) return
+  const placements = experience.layers.models3D
+    ? collectModelPlacements(experience)
+    : []
+  if (placements.length === 0) {
+    const layer = glbRef.current
+    if (!layer || !map.getLayer(STUDIO_GLB_LAYER_ID)) return
+    layer.setVisible(false)
+    void layer.syncPlacements([])
+    return
+  }
+  const layer = ensureStudioGlbLayer(map, glbRef.current)
+  glbRef.current = layer
+  layer.setVisible(true)
+  void layer.syncPlacements(placements).then(() => {
+    try {
+      if (map.getLayer(STUDIO_GLB_LAYER_ID)) {
+        map.moveLayer(STUDIO_GLB_LAYER_ID)
+      }
+      map.triggerRepaint()
+    } catch {
+      // The style can reload before the model finishes loading.
+    }
+  })
+}
+
+function mountExperienceLayers(map: Map, snap: OverlaySnap): void {
   const experience = snap.experience
   if (!experience) return
   if (experience.map.terrain) {
@@ -193,6 +318,7 @@ function mountExperienceLayers(
       }
     })
   }
+  ensureRouteLayers(map)
   if (!map.getSource(AMENITY_SOURCE)) {
     map.addSource(AMENITY_SOURCE, { type: "geojson", data: snap.amenities })
   }
@@ -236,33 +362,15 @@ function mountExperienceLayers(
       }
     })
   }
-  const placements: StudioGlbPlacement[] = experience.assets
-    .filter((asset) => asset.type === "model_3d" && asset.url)
-    .map((asset) => ({
-      id: asset.id,
-      url: resolveMediaUrl(experience.apiOrigin, asset.url),
-      longitude: asset.position.longitude,
-      latitude: asset.position.latitude,
-      altitude: asset.position.altitude ?? 0,
-      scale: asset.transform.scale || 1,
-      rotation: [
-        asset.transform.rotation[0] ?? 0,
-        asset.transform.rotation[1] ?? 0,
-        asset.transform.rotation[2] ?? 0
-      ]
-    }))
-  if (experience.layers.models3D && placements.length > 0) {
-    const layer = ensureStudioGlbLayer(map, glbRef.current)
-    glbRef.current = layer
-    void layer.syncPlacements(placements)
-  }
   if (map.getLayer(ISO_LAYER) && map.getLayer(LOT_LAYER)) {
     map.moveLayer(ISO_LAYER, LOT_LAYER)
   }
-  applyRoadLayers(
+  const roadsVisible = experience.layers.roads !== false
+  applyRoadLayers(map, roadsVisible, experience.map.roadsStyle)
+  applyRoadLineStyle(
     map,
-    experience.layers.roads !== false,
-    experience.map.roadsStyle
+    resolveRoadLine(experience.map.roadsStyle?.line),
+    roadsVisible
   )
 }
 
@@ -332,6 +440,7 @@ export function ProjectExperience({
   projectId,
   apiBaseUrl,
   mapboxAccessToken,
+  googleMapsApiKey,
   data,
   amenitiesVisible,
   navigationVisible,
@@ -348,10 +457,16 @@ export function ProjectExperience({
   const pendingPanoramaReveal = useRef<(() => void) | null>(null)
   const openPanoramaRef = useRef<(asset: PublicAsset) => void>(() => undefined)
   const amenityRowsRef = useRef<readonly PublicAmenity[]>([])
+  const assetRowsRef = useRef<readonly PublicAsset[]>([])
   const selectAmenityRef = useRef<
     (amenity: PublicAmenity, source: AmenitySelectSource) => void
   >(() => undefined)
   const glbRef = useRef<StudioGlbCustomLayer | null>(null)
+  const routeAbortRef = useRef<AbortController | null>(null)
+  const routeAmenityIdRef = useRef<string | null>(null)
+  const showPlaceRouteRef = useRef<
+    (amenity: PublicAmenity, moveCamera: boolean) => void
+  >(() => undefined)
   const [loaded, setLoaded] = useState<ExperiencePlayerData | null>(data ?? null)
   const [error, setError] = useState<string | null>(null)
   const [mapReady, setMapReady] = useState(0)
@@ -388,6 +503,24 @@ export function ProjectExperience({
   }, [amenitiesVisible])
 
   useEffect(() => {
+    const map = mapRef.current
+    const experience = loaded
+    if (!map?.isStyleLoaded() || !experience) return
+    const lotSource = map.getSource(LOT_SOURCE) as GeoJSONSource | undefined
+    lotSource?.setData(experience.lots ?? EMPTY_COLLECTION)
+    if (map.getLayer(LOT_LAYER)) {
+      map.setLayoutProperty(
+        LOT_LAYER,
+        "visibility",
+        experience.layers.lots ? "visible" : "none"
+      )
+    }
+    const roadsVisible = experience.layers.roads !== false
+    applyRoadLayers(map, roadsVisible, experience.map.roadsStyle)
+    applyRoadLineStyle(map, resolveRoadLine(experience.map.roadsStyle?.line), roadsVisible)
+  }, [mapReady, loaded])
+
+  useEffect(() => {
     if (navigationVisible !== undefined) setShowNavigation(navigationVisible)
   }, [navigationVisible])
 
@@ -418,12 +551,14 @@ export function ProjectExperience({
   }, [apiBaseUrl, data, projectId])
 
   const amenityRows = loaded?.locations ?? []
+  const assetRows = loaded?.assets ?? []
   const amenityCategories = loaded?.amenityCategories ?? []
   const amenities = useMemo(
     () => amenityCollection(amenityRows, amenityCategories),
     [amenityCategories, amenityRows]
   )
   amenityRowsRef.current = amenityRows
+  assetRowsRef.current = assetRows
   const optionLabels = useMemo(
     () => resolveMapOptionLabels(locale, labels),
     [labels, locale]
@@ -435,6 +570,7 @@ export function ProjectExperience({
     travelGeojson
   })
   overlayRef.current = { experience: loaded, amenities, showAmenities, travelGeojson }
+  const modelKey = modelPlacementKey(loaded)
 
   useEffect(() => {
     const longitude = loaded?.projectCenter?.longitude
@@ -517,6 +653,52 @@ export function ProjectExperience({
     })
   }
   openPanoramaRef.current = openPanoramaAsset
+  const showPlaceRoute = (amenity: PublicAmenity, moveCamera: boolean): void => {
+    const map = mapRef.current
+    if (!map) return
+    routeAmenityIdRef.current = amenity.id
+    if (!map.isStyleLoaded()) return
+    ensureRouteLayers(map)
+    applyRouteAppearance(map, amenity.routeColor, amenity.routeLine)
+    const place = representativePoint(amenity.geometry)
+    const reducedMotion = prefersReducedMotion()
+    if (moveCamera && place) {
+      frameProjectAndPlace({
+        map,
+        project: loaded?.projectCenter ?? null,
+        place,
+        route: amenity.route,
+        reducedMotion
+      })
+    }
+    routeAbortRef.current?.abort()
+    const controller = new AbortController()
+    routeAbortRef.current = controller
+    paintRouteLine({
+      map,
+      collection: routeCollection(amenity.route),
+      reducedMotion,
+      signal: controller.signal
+    })
+  }
+  showPlaceRouteRef.current = showPlaceRoute
+  const restoreSelectedRoute = (): void => {
+    const map = mapRef.current
+    if (!map) return
+    const selectedId = selected?.id
+    const selectedAmenity = selectedId
+      ? amenityRowsRef.current.find((row) => row.id === selectedId)
+      : undefined
+    if (selectedAmenity) {
+      if (routeAmenityIdRef.current !== selectedAmenity.id) {
+        showPlaceRoute(selectedAmenity, false)
+      }
+      return
+    }
+    routeAbortRef.current?.abort()
+    routeAmenityIdRef.current = null
+    clearRouteLine(map)
+  }
   const selectAmenity = (amenity: PublicAmenity, source: AmenitySelectSource) => {
     const panorama = (loaded?.assets ?? []).find(
       (asset) =>
@@ -533,14 +715,7 @@ export function ProjectExperience({
     setSelected(payload)
     setShowAmenities(true)
     onAmenitySelectRef.current?.(payload)
-    const map = mapRef.current
-    if (map && payload.lngLat) {
-      map.flyTo({
-        center: [payload.lngLat.longitude, payload.lngLat.latitude],
-        zoom: Math.max(map.getZoom(), 16),
-        duration: prefersReducedMotion() ? 0 : 700
-      })
-    }
+    if (payload.lngLat) showPlaceRoute(amenity, true)
   }
   selectAmenityRef.current = selectAmenity
 
@@ -562,9 +737,25 @@ export function ProjectExperience({
     })
     map.addControl(new mapboxgl.NavigationControl({ visualizePitch: true }), "bottom-right")
     let hasFittedLots = false
+    let removed = false
+    let glbFrame = 0
+    const paintModels = (): void => {
+      if (removed) return
+      syncExperienceModels(map, overlayRef.current, glbRef)
+    }
     map.on("style.load", () => {
       glbRef.current = null
-      mountExperienceLayers(map, overlayRef.current, glbRef)
+      mountExperienceLayers(map, overlayRef.current)
+      paintModels()
+      cancelAnimationFrame(glbFrame)
+      glbFrame = requestAnimationFrame(paintModels)
+      const activeRouteId = routeAmenityIdRef.current
+      if (activeRouteId) {
+        const activeAmenity = amenityRowsRef.current.find(
+          (row) => row.id === activeRouteId
+        )
+        if (activeAmenity) showPlaceRouteRef.current(activeAmenity, true)
+      }
       const activeHoverId = hoveredIdRef.current
       if (activeHoverId && map.getSource(AMENITY_SOURCE)) {
         map.setFeatureState(
@@ -623,6 +814,16 @@ export function ProjectExperience({
         if (amenity) selectAmenityRef.current(amenity, "map")
         return
       }
+      const linkedPlace = nearestLinkedPlace(
+        map,
+        event.point,
+        amenityRowsRef.current,
+        assetRowsRef.current
+      )
+      if (linkedPlace) {
+        selectAmenityRef.current(linkedPlace, "map")
+        return
+      }
       const lotHit = hits.find((hit) => hit.layer?.id === LOT_LAYER)
       if (!lotHit) return
       const properties = lotHit.properties ?? {}
@@ -639,13 +840,21 @@ export function ProjectExperience({
     mapRef.current = map
     setMapReady((value) => value + 1)
     return () => {
+      removed = true
+      cancelAnimationFrame(glbFrame)
       map.remove()
       mapRef.current = null
       glbRef.current = null
     }
-    // Map is created once per loaded experience identity.
+    // Recreate the map only when the style URL or token changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loaded, mapboxAccessToken])
+  }, [loaded?.map.style, mapboxAccessToken])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map?.isStyleLoaded()) return
+    syncExperienceModels(map, overlayRef.current, glbRef)
+  }, [modelKey, mapReady])
 
   useEffect(() => {
     const map = mapRef.current
@@ -734,18 +943,23 @@ export function ProjectExperience({
   }, [hoverLatitude, hoverLongitude, mapReady])
 
   useEffect(() => {
-    if (!hoveredId || hoverLongitude == null || hoverLatitude == null) return
-    const timer = window.setTimeout(() => {
-      const map = mapRef.current
-      if (!map) return
-      map.flyTo({
-        center: [hoverLongitude, hoverLatitude],
-        zoom: Math.max(map.getZoom(), 16),
-        duration: prefersReducedMotion() ? 0 : 700
-      })
-    }, 180)
-    return () => window.clearTimeout(timer)
+    if (!hoveredId || hoverLongitude == null || hoverLatitude == null) {
+      restoreSelectedRoute()
+      return
+    }
+    const amenity = amenityRowsRef.current.find((row) => row.id === hoveredId)
+    if (!amenity) return
+    showPlaceRouteRef.current(amenity, true)
   }, [hoverLatitude, hoverLongitude, hoveredId])
+
+  useEffect(() => {
+    if (selected || hoveredIdRef.current) return
+    const map = mapRef.current
+    if (!map) return
+    routeAbortRef.current?.abort()
+    routeAmenityIdRef.current = null
+    clearRouteLine(map)
+  }, [selected])
 
   useEffect(() => {
     const map = mapRef.current
@@ -896,21 +1110,16 @@ export function ProjectExperience({
         )}
         {showNavigation && (
           <aside style={{ ...listStyle, left: showAmenities ? 384 : 16 }}>
-            {amenityRows.map((amenity) => {
-              const payload = toAmenityPayload(amenity, "list")
-              const href = payload.lngLat
-                ? `https://www.google.com/maps/dir/?api=1${
-                    loaded?.projectCenter
-                      ? `&origin=${loaded.projectCenter.latitude},${loaded.projectCenter.longitude}`
-                      : ""
-                  }&destination=${payload.lngLat.latitude},${payload.lngLat.longitude}`
-                : undefined
-              return (
-                <a key={amenity.id} href={href} target="_blank" rel="noreferrer" style={rowStyle(false, false)}>
-                  {amenity.name}
-                </a>
-              )
-            })}
+            {amenityRows.map((amenity) => (
+              <button
+                key={amenity.id}
+                type="button"
+                onClick={() => selectAmenity(amenity, "list")}
+                style={rowStyle(selected?.id === amenity.id, hoveredId === amenity.id)}
+              >
+                {amenity.name}
+              </button>
+            ))}
           </aside>
         )}
         {error && (
@@ -951,6 +1160,7 @@ export function ProjectExperience({
                 amenity={selected}
                 apiOrigin={loaded.apiOrigin}
                 projectCenter={loaded.projectCenter}
+                googleMapsApiKey={googleMapsApiKey}
                 onClose={() => setSelected(null)}
               />
             </div>
