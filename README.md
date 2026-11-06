@@ -4,6 +4,8 @@ Mapbox player for a published Omega project. The host shows the map, amenities, 
 
 The player includes Map Options (3D view, satellite, travel times) in the browser. Those choices are not saved on the project. Travel times use the same `mapboxAccessToken`.
 
+Landing pages: [docs/landing-host.md](docs/landing-host.md). That file says what the player already draws and what the page still has to design.
+
 ## Install
 
 The host must already depend on `react`, `react-dom`, `mapbox-gl`, and `three`.
