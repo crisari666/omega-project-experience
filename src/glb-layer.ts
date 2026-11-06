@@ -10,6 +10,7 @@ export const STUDIO_GLB_LAYER_ID = "studio-assets-glb"
 const DEGREES_TO_RADIANS = Math.PI / 180
 const GLTF_Y_UP_TO_Z_UP = Math.PI / 2
 const ELEVATION_EPSILON_METERS = 0.05
+const TERRAIN_SOURCE_ID = "mapbox-dem"
 
 export type StudioGlbPlacement = {
   readonly id: string
@@ -59,6 +60,10 @@ export class StudioGlbCustomLayer implements CustomLayerInterface {
   private visible = true
   private syncVersion = 0
   private readonly handleIdle = (): void => this.refreshTerrainElevations()
+  private readonly handleSourceData = (event: { sourceId?: string }): void => {
+    if (event.sourceId !== TERRAIN_SOURCE_ID) return
+    this.refreshTerrainElevations()
+  }
 
   public onAdd(map: MapboxMap, gl: WebGL2RenderingContext): void {
     this.map = map
@@ -79,10 +84,13 @@ export class StudioGlbCustomLayer implements CustomLayerInterface {
     })
     this.renderer.autoClear = false
     map.on("idle", this.handleIdle)
+    map.on("sourcedata", this.handleSourceData)
   }
 
   public onRemove(): void {
+    this.syncVersion += 1
     this.map?.off("idle", this.handleIdle)
+    this.map?.off("sourcedata", this.handleSourceData)
     this.detachNodes()
     this.renderer = null
     this.map = null
@@ -115,6 +123,12 @@ export class StudioGlbCustomLayer implements CustomLayerInterface {
     await Promise.all(
       placements.map((placement) => this.attachPlacement(placement, version))
     )
+    if (version !== this.syncVersion) return
+    this.refreshTerrainElevations()
+    this.map?.once("idle", () => {
+      if (version !== this.syncVersion) return
+      this.refreshTerrainElevations()
+    })
     this.map?.triggerRepaint()
   }
 
