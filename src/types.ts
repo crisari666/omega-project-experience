@@ -92,6 +92,7 @@ export type ExperiencePlayerData = {
     buildings3D: boolean
     fog: boolean
     roadsStyle?: RoadsStyle
+    availableLotColor?: string
     initialCamera: ExperienceCamera
   }
   layers: {

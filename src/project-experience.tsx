@@ -50,13 +50,37 @@ const AMENITY_LAYER = "experience-amenities-point"
 const AMENITY_HALO_LAYER = "experience-amenities-halo"
 const SOURCE_HIT_PX = 28
 const PULSE_DURATION_MS = 1100
-const HALO_START_RADIUS = 10
-const HALO_GROWTH = 26
+const HALO_START_RADIUS = 8
+const HALO_GROWTH = 14
+const DOT_RADIUS = 6
+const DOT_HOVER_RADIUS = 10
 const HALO_PEAK_OPACITY = 0.85
 const ISO_SOURCE = "experience-isochrone"
 const ISO_LAYER = "experience-isochrone-fill"
 const SATELLITE_STYLE = "mapbox://styles/mapbox/satellite-streets-v12"
 const STREETS_STYLE = "mapbox://styles/mapbox/streets-v12"
+const DEFAULT_AVAILABLE_LOT_COLOR = "#15803d"
+const AVAILABLE_LOT_COLOR = /^#[0-9A-Fa-f]{6}$/
+
+function resolveAvailableLotColor(value: string | undefined): string {
+  const trimmed = value?.trim() ?? ""
+  return AVAILABLE_LOT_COLOR.test(trimmed) ? trimmed : DEFAULT_AVAILABLE_LOT_COLOR
+}
+
+function lotFillColor(available: string): mapboxgl.ExpressionSpecification {
+  return [
+    "match",
+    ["get", "status"],
+    "available",
+    available,
+    "sold",
+    "#64748b",
+    "reserved",
+    "#b45309",
+    "#1e293b"
+  ]
+}
+
 const EMPTY_COLLECTION: GeoJSON.FeatureCollection = {
   type: "FeatureCollection",
   features: []
@@ -303,17 +327,9 @@ function mountExperienceLayers(map: Map, snap: OverlaySnap): void {
       source: LOT_SOURCE,
       layout: { visibility: experience.layers.lots ? "visible" : "none" },
       paint: {
-        "fill-color": [
-          "match",
-          ["get", "status"],
-          "available",
-          "#15803d",
-          "sold",
-          "#64748b",
-          "reserved",
-          "#b45309",
-          "#1e293b"
-        ],
+        "fill-color": lotFillColor(
+          resolveAvailableLotColor(experience.map.availableLotColor)
+        ),
         "fill-opacity": 0.55
       }
     })
@@ -322,18 +338,25 @@ function mountExperienceLayers(map: Map, snap: OverlaySnap): void {
   if (!map.getSource(AMENITY_SOURCE)) {
     map.addSource(AMENITY_SOURCE, { type: "geojson", data: snap.amenities })
   }
-  const amenityVisibility = snap.showAmenities ? "visible" : "none"
+  const amenityHidden = { visibility: "none" as const }
+  const roundMarker = {
+    "circle-pitch-alignment": "viewport" as const,
+    "circle-pitch-scale": "viewport" as const,
+    "circle-blur": 0.15,
+    "circle-stroke-width": 0
+  }
   if (!map.getLayer(AMENITY_HALO_LAYER)) {
     map.addLayer({
       id: AMENITY_HALO_LAYER,
       type: "circle",
       source: AMENITY_SOURCE,
-      layout: { visibility: amenityVisibility },
+      layout: amenityHidden,
+      filter: ["==", ["get", "categoryKey"], ""],
       paint: {
+        ...roundMarker,
         "circle-radius": HALO_START_RADIUS,
         "circle-color": ["coalesce", ["get", "color"], "#38BDF8"],
-        "circle-opacity": 0.22,
-        "circle-stroke-width": 0
+        "circle-opacity": 0.22
       }
     })
   }
@@ -342,22 +365,22 @@ function mountExperienceLayers(map: Map, snap: OverlaySnap): void {
       id: AMENITY_LAYER,
       type: "circle",
       source: AMENITY_SOURCE,
-      layout: { visibility: amenityVisibility },
+      layout: amenityHidden,
+      filter: ["==", ["get", "categoryKey"], ""],
       paint: {
-        "circle-radius": ["case", ["boolean", ["feature-state", "hover"], false], 14, 8],
-        "circle-opacity": ["case", ["boolean", ["feature-state", "dim"], false], 0.28, 1],
+        ...roundMarker,
+        "circle-radius": [
+          "case",
+          ["boolean", ["feature-state", "hover"], false],
+          DOT_HOVER_RADIUS,
+          DOT_RADIUS
+        ],
+        "circle-opacity": 1,
         "circle-color": [
           "case",
           ["boolean", ["feature-state", "hover"], false],
           "#E07A3D",
           ["coalesce", ["get", "color"], "#38BDF8"]
-        ],
-        "circle-stroke-width": 2,
-        "circle-stroke-color": [
-          "case",
-          ["boolean", ["feature-state", "hover"], false],
-          "#E07A3D",
-          "#0f172a"
         ]
       }
     })
@@ -493,6 +516,8 @@ export function ProjectExperience({
   const onAmenitySelectRef = useRef(onAmenitySelect)
   const listHoverRef = useRef(false)
   const hoveredIdRef = useRef<string | null>(null)
+  const cameraMovingRef = useRef(false)
+  const flightTokenRef = useRef(0)
   const showAmenitiesRef = useRef(showAmenities)
   showAmenitiesRef.current = showAmenities
   onLotClickRef.current = onLotClick
@@ -513,6 +538,11 @@ export function ProjectExperience({
         LOT_LAYER,
         "visibility",
         experience.layers.lots ? "visible" : "none"
+      )
+      map.setPaintProperty(
+        LOT_LAYER,
+        "fill-color",
+        lotFillColor(resolveAvailableLotColor(experience.map.availableLotColor))
       )
     }
     const roadsVisible = experience.layers.roads !== false
@@ -663,6 +693,15 @@ export function ProjectExperience({
     const place = representativePoint(amenity.geometry)
     const reducedMotion = prefersReducedMotion()
     if (moveCamera && place) {
+      flightTokenRef.current += 1
+      const flightToken = flightTokenRef.current
+      cameraMovingRef.current = true
+      const finishFlight = (): void => {
+        if (flightTokenRef.current !== flightToken) return
+        cameraMovingRef.current = false
+      }
+      map.once("moveend", finishFlight)
+      window.setTimeout(finishFlight, reducedMotion ? 0 : 800)
       frameProjectAndPlace({
         map,
         project: loaded?.projectCenter ?? null,
@@ -674,6 +713,10 @@ export function ProjectExperience({
     routeAbortRef.current?.abort()
     const controller = new AbortController()
     routeAbortRef.current = controller
+    if (!amenity.route) {
+      clearRouteLine(map)
+      return
+    }
     paintRouteLine({
       map,
       collection: routeCollection(amenity.route),
@@ -763,7 +806,7 @@ export function ProjectExperience({
           { hover: true }
         )
       }
-      if (hasFittedLots) return
+      if (hasFittedLots || routeAmenityIdRef.current) return
       hasFittedLots = true
       const snap = overlayRef.current.experience
       const bounds = lotBounds(snap?.lots ?? null)
@@ -786,9 +829,21 @@ export function ProjectExperience({
     map.on("mousemove", (event: MapMouseEvent) => {
       if (listHoverRef.current || !map.getLayer(AMENITY_LAYER)) return
       const hits = map.queryRenderedFeatures(event.point, {
-        layers: [AMENITY_LAYER].filter((id) => Boolean(map.getLayer(id)))
+        layers: [AMENITY_LAYER, AMENITY_HALO_LAYER].filter((id) =>
+          Boolean(map.getLayer(id))
+        )
       })
-      const nextId = hits[0]?.properties?.id ? String(hits[0].properties.id) : null
+      const amenityHit = hits.find(
+        (hit) =>
+          hit.layer?.id === AMENITY_LAYER || hit.layer?.id === AMENITY_HALO_LAYER
+      )
+      const nextId = amenityHit?.properties?.id
+        ? String(amenityHit.properties.id)
+        : null
+      if (!nextId && cameraMovingRef.current) {
+        map.getCanvas().style.cursor = "pointer"
+        return
+      }
       map.getCanvas().style.cursor = nextId ? "pointer" : ""
       setHoveredId((current) => (current === nextId ? current : nextId))
     })
@@ -883,13 +938,7 @@ export function ProjectExperience({
         { hover: true }
       )
     }
-    const visibility = showAmenities ? "visible" : "none"
-    ;[AMENITY_LAYER, AMENITY_HALO_LAYER].forEach((layerId) => {
-      if (map.getLayer(layerId)) {
-        map.setLayoutProperty(layerId, "visibility", visibility)
-      }
-    })
-  }, [amenities, showAmenities])
+  }, [amenities])
 
   useEffect(() => {
     const map = mapRef.current
@@ -908,15 +957,17 @@ export function ProjectExperience({
 
   useEffect(() => {
     const map = mapRef.current
-    if (!map?.getSource(AMENITY_SOURCE)) return
-    for (const feature of amenities.features) {
-      const featureId = feature.id
-      if (featureId == null) continue
-      const categoryKey = String(feature.properties?.categoryKey ?? "")
-      const dim = Boolean(activeCategoryKey) && categoryKey !== activeCategoryKey
-      map.setFeatureState({ source: AMENITY_SOURCE, id: featureId }, { dim })
-    }
-  }, [activeCategoryKey, amenities, mapReady])
+    if (!map) return
+    const visible = showAmenities && Boolean(activeCategoryKey) ? "visible" : "none"
+    const categoryFilter = activeCategoryKey
+      ? ["==", ["get", "categoryKey"], activeCategoryKey]
+      : ["==", ["get", "categoryKey"], ""]
+    ;[AMENITY_LAYER, AMENITY_HALO_LAYER].forEach((layerId) => {
+      if (!map.getLayer(layerId)) return
+      map.setFilter(layerId, categoryFilter)
+      map.setLayoutProperty(layerId, "visibility", visible)
+    })
+  }, [activeCategoryKey, amenities, mapReady, showAmenities])
 
   const hoveredAmenity = amenityRows.find((row) => row.id === hoveredId) ?? null
   const hoveredLngLat = hoveredAmenity
@@ -975,11 +1026,7 @@ export function ProjectExperience({
           "circle-radius",
           HALO_START_RADIUS
         )
-        map.setPaintProperty(AMENITY_HALO_LAYER, "circle-opacity", [
-          "*",
-          0.22,
-          ["case", ["boolean", ["feature-state", "dim"], false], 0.28, 1]
-        ])
+        map.setPaintProperty(AMENITY_HALO_LAYER, "circle-opacity", 0.22)
       }
       return
     }
@@ -993,11 +1040,11 @@ export function ProjectExperience({
           "circle-radius",
           HALO_START_RADIUS + progress * HALO_GROWTH
         )
-        map.setPaintProperty(AMENITY_HALO_LAYER, "circle-opacity", [
-          "*",
-          HALO_PEAK_OPACITY * (1 - progress),
-          ["case", ["boolean", ["feature-state", "dim"], false], 0.28, 1]
-        ])
+        map.setPaintProperty(
+          AMENITY_HALO_LAYER,
+          "circle-opacity",
+          HALO_PEAK_OPACITY * (1 - progress)
+        )
       }
       frame = requestAnimationFrame(tick)
     }
@@ -1174,6 +1221,7 @@ export function ProjectExperience({
             altitude={openPanorama.position.altitude}
             headingDegrees={openPanorama.transform.rotation[1] ?? 0}
             lots={loaded.lots}
+            availableLotColor={resolveAvailableLotColor(loaded.map.availableLotColor)}
             onClose={() => setOpenPanorama(null)}
           />
         )}

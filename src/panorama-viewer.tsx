@@ -18,6 +18,7 @@ type Props = {
   altitude: number | null
   headingDegrees: number
   lots: GeoJSON.FeatureCollection | null
+  availableLotColor?: string
   onClose: () => void
 }
 
@@ -28,6 +29,7 @@ export function PanoramaViewer({
   altitude,
   headingDegrees,
   lots,
+  availableLotColor = "#15803d",
   onClose
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -63,7 +65,8 @@ export function PanoramaViewer({
       originLongitude: longitude,
       originLatitude: latitude,
       cameraHeight: altitude ?? DEFAULT_CAMERA_HEIGHT_M,
-      headingDegrees
+      headingDegrees,
+      availableLotColor
     })
     scene.add(lotLines)
     let yaw = 0
@@ -142,7 +145,7 @@ export function PanoramaViewer({
       })
       renderer.dispose()
     }
-  }, [altitude, headingDegrees, imageUrl, latitude, longitude, lots])
+  }, [altitude, availableLotColor, headingDegrees, imageUrl, latitude, longitude, lots])
   return (
     <div ref={rootRef} style={shellStyle}>
       <canvas ref={canvasRef} style={canvasStyle} />
@@ -165,6 +168,7 @@ function buildLotLines(input: {
   originLatitude: number
   cameraHeight: number
   headingDegrees: number
+  availableLotColor: string
 }): THREE.Group {
   const group = new THREE.Group()
   const features = input.lots?.features ?? []
@@ -184,7 +188,10 @@ function buildLotLines(input: {
     const geometry = new THREE.BufferGeometry().setFromPoints(points)
     const status = String(feature.properties?.status ?? "")
     const material = new THREE.LineBasicMaterial({
-      color: LOT_COLORS[status] ?? "#f8fafc"
+      color:
+        status === "available"
+          ? input.availableLotColor
+          : LOT_COLORS[status] ?? "#f8fafc"
     })
     group.add(new THREE.LineLoop(geometry, material))
   }
