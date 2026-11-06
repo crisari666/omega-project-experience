@@ -1187,14 +1187,6 @@ export function ProjectExperience({
           onProfileChange={setTravelProfile}
           onMinutesChange={setTravelMinutes}
         />
-        <div style={{ position: "absolute", top: 16, left: 16, display: "flex", gap: 8, zIndex: 2 }}>
-          <button type="button" onClick={() => setShowAmenities((value) => !value)} style={buttonStyle(showAmenities)}>
-            Amenities
-          </button>
-          <button type="button" onClick={() => setShowNavigation((value) => !value)} style={buttonStyle(showNavigation)}>
-            Navigation
-          </button>
-        </div>
         {showAmenities && (
           <AmenityBrowser
             categories={amenityCategories}
@@ -1296,14 +1288,15 @@ function buttonStyle(active: boolean): React.CSSProperties {
     background: active ? "#0f172a" : "rgba(15,23,42,0.72)",
     color: "#f8fafc",
     borderRadius: 999,
-    padding: "8px 14px",
+    padding: "4px 10px",
+    fontSize: 12,
     cursor: "pointer"
   }
 }
 
 const listStyle: React.CSSProperties = {
   position: "absolute",
-  top: 64,
+  top: 52,
   left: 16,
   width: 210,
   maxHeight: "calc(100% - 88px)",
@@ -1311,7 +1304,7 @@ const listStyle: React.CSSProperties = {
   background: "rgba(11,18,32,0.92)",
   border: "1px solid #1e293b",
   borderRadius: 12,
-  padding: 8,
+  padding: 6,
   zIndex: 2
 }
 
@@ -1328,9 +1321,10 @@ function rowStyle(active: boolean, hovered: boolean): React.CSSProperties {
         : "transparent",
     color: "#e2e8f0",
     borderRadius: 8,
-    padding: "8px 10px",
+    padding: "4px 8px",
+    fontSize: 12,
     cursor: "pointer",
     textDecoration: "none",
-    marginBottom: 4
+    marginBottom: 2
   }
 }

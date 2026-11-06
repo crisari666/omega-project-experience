@@ -129,7 +129,7 @@ function coverUrl(apiOrigin: string, amenity: PublicAmenity): string | null {
 
 const panelStyle: React.CSSProperties = {
   position: "absolute",
-  top: 64,
+  top: 16,
   left: 16,
   width: "min(360px, calc(100vw - 32px))",
   maxHeight: "calc(100% - 88px)",
@@ -137,28 +137,30 @@ const panelStyle: React.CSSProperties = {
   zIndex: 2,
   display: "flex",
   flexDirection: "column",
-  gap: 8
+  gap: 4
 }
 
 const gridStyle: React.CSSProperties = {
-  display: "grid",
-  gridTemplateColumns: "1fr 1fr",
-  gap: 6
+  display: "flex",
+  flexWrap: "wrap",
+  gap: 4,
+  maxWidth: 220
 }
 
 function chipStyle(open: boolean): React.CSSProperties {
   return {
-    minHeight: 36,
-    minWidth: 0,
+    minHeight: 28,
+    maxWidth: "100%",
+    width: "fit-content",
     display: "flex",
     alignItems: "center",
-    gap: 6,
-    padding: "6px 10px",
-    borderRadius: 10,
+    gap: 4,
+    padding: "3px 7px",
+    borderRadius: 8,
     border: "1px solid rgba(255,255,255,0.08)",
     background: open ? RUST : "#161616",
     color: "#f8fafc",
-    fontSize: 12,
+    fontSize: 10,
     fontWeight: 700,
     letterSpacing: "0.04em",
     textTransform: "uppercase",
@@ -168,8 +170,8 @@ function chipStyle(open: boolean): React.CSSProperties {
 }
 
 const swatchStyle: React.CSSProperties = {
-  width: 10,
-  height: 10,
+  width: 8,
+  height: 8,
   borderRadius: "50%",
   flexShrink: 0
 }
@@ -184,6 +186,7 @@ const chipLabelStyle: React.CSSProperties = {
 const amenityListStyle: React.CSSProperties = {
   display: "flex",
   flexDirection: "column",
+  gap: 6,
   borderRadius: 14,
   overflow: "hidden",
   background: "#111111",
@@ -194,9 +197,9 @@ function amenityRowStyle(selected: boolean, hovered: boolean): React.CSSProperti
   return {
     display: "flex",
     alignItems: "center",
-    gap: 10,
+    gap: 6,
     width: "100%",
-    padding: "8px 10px",
+    padding: "12px 14px",
     border: 0,
     borderBottom: "1px solid rgba(255,255,255,0.06)",
     background: selected ? RUST : hovered ? "rgba(196,83,42,0.35)" : "#161616",
@@ -207,8 +210,8 @@ function amenityRowStyle(selected: boolean, hovered: boolean): React.CSSProperti
 }
 
 const thumbStyle: React.CSSProperties = {
-  width: 36,
-  height: 36,
+  width: 28,
+  height: 28,
   borderRadius: "50%",
   objectFit: "cover",
   flexShrink: 0,
@@ -223,14 +226,14 @@ const copyStyle: React.CSSProperties = {
 }
 
 const titleStyle: React.CSSProperties = {
-  fontSize: 16,
-  fontWeight: 650,
+  fontSize: 15,
+  fontWeight: 500,
   lineHeight: 1.25
 }
 
 function subtitleStyle(selected: boolean): React.CSSProperties {
   return {
-    fontSize: 14,
+    fontSize: 11,
     color: selected ? "rgba(255,255,255,0.86)" : "#d6d3d1",
     lineHeight: 1.3
   }

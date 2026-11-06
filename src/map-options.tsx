@@ -256,12 +256,12 @@ const clusterStyle: React.CSSProperties = {
   zIndex: 3,
   display: "flex",
   alignItems: "flex-start",
-  gap: 8
+  gap: 4
 }
 
 const iconButtonStyle: React.CSSProperties = {
-  width: 42,
-  height: 42,
+  width: 34,
+  height: 34,
   display: "inline-flex",
   alignItems: "center",
   justifyContent: "center",
@@ -273,16 +273,16 @@ const iconButtonStyle: React.CSSProperties = {
 
 function optionsButtonStyle(open: boolean): React.CSSProperties {
   return {
-    height: 42,
+    height: 34,
     display: "inline-flex",
     alignItems: "center",
-    gap: 8,
-    padding: "0 14px",
+    gap: 6,
+    padding: "0 10px",
     borderRadius: 10,
     border: "1px solid rgba(255,255,255,0.16)",
     background: INK,
     color: COPPER,
-    fontSize: 15,
+    fontSize: 12,
     fontWeight: 600,
     letterSpacing: "0.01em",
     cursor: "pointer",
@@ -293,13 +293,13 @@ function optionsButtonStyle(open: boolean): React.CSSProperties {
 
 const panelStyle: React.CSSProperties = {
   position: "absolute",
-  top: 50,
+  top: 42,
   right: 0,
   width: "min(280px, calc(100vw - 32px))",
   maxHeight: "calc(100vh - 90px)",
   display: "flex",
   flexDirection: "column",
-  padding: "36px 0 8px",
+  padding: "30px 0 6px",
   borderRadius: 12,
   background: "#1c1c1f",
   color: COPPER,
@@ -309,7 +309,7 @@ const panelStyle: React.CSSProperties = {
 
 const panelScrollStyle: React.CSSProperties = {
   overflowY: "auto",
-  padding: "0 16px 8px"
+  padding: "0 10px 4px"
 }
 
 const closeStyle: React.CSSProperties = {
@@ -331,8 +331,8 @@ function toggleRowStyle(disabled: boolean): React.CSSProperties {
     width: "100%",
     display: "flex",
     alignItems: "center",
-    gap: 12,
-    padding: "8px 4px",
+    gap: 8,
+    padding: "4px 2px",
     border: 0,
     background: "transparent",
     cursor: disabled ? "not-allowed" : "pointer",
@@ -368,14 +368,14 @@ function knobStyle(checked: boolean): React.CSSProperties {
 function toggleLabelStyle(checked: boolean): React.CSSProperties {
   return {
     color: checked ? COPPER : "#d6d3d1",
-    fontSize: 18,
+    fontSize: 13,
     fontWeight: 600
   }
 }
 
 const ruleStyle: React.CSSProperties = {
   height: 1,
-  margin: "8px 4px",
+  margin: "4px 2px",
   background: "rgba(255,255,255,0.12)"
 }
 
@@ -383,8 +383,8 @@ function groupStyle(enabled: boolean): React.CSSProperties {
   return {
     display: "flex",
     flexDirection: "column",
-    gap: 8,
-    marginTop: 8,
+    gap: 4,
+    marginTop: 4,
     opacity: enabled ? 1 : 0.4,
     pointerEvents: enabled ? "auto" : "none"
   }
@@ -393,23 +393,23 @@ function groupStyle(enabled: boolean): React.CSSProperties {
 const segmentRowStyle: React.CSSProperties = {
   display: "grid",
   gridTemplateColumns: "1fr 1fr 1fr",
-  gap: 8
+  gap: 4
 }
 
 function segmentStyle(active: boolean): React.CSSProperties {
   return {
-    minHeight: 40,
+    minHeight: 32,
     display: "inline-flex",
     flexDirection: "column",
     alignItems: "center",
     justifyContent: "center",
     gap: 2,
-    padding: "6px 4px",
+    padding: "4px 2px",
     borderRadius: 8,
     border: `1px solid ${active ? COPPER : "rgba(224,122,61,0.35)"}`,
     background: active ? "rgba(224,122,61,0.16)" : "transparent",
     color: COPPER,
-    fontSize: 13,
+    fontSize: 11,
     fontWeight: 600,
     cursor: "pointer",
     transition: "background 200ms ease, border-color 200ms ease"
