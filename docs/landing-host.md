@@ -45,10 +45,9 @@ One Mapbox map. Do not mount a second map next to this stage.
 These sit on top of the map. Leave them.
 
 - **Lots.** Polygons fill by status. Available uses the published `map.availableLotColor`, or `#15803d` when that value is missing. Sold is `#64748b`, reserved is `#b45309`, anything else is `#1e293b`. A click calls `onLotClick`. There is no purchase sheet.
-- **Amenities.** A category chip list. Map dots show only for the open category. No open category means no dots. Hover or click flies the camera between the project and that place and, when a driving line was published, draws it. The halo pulses unless `markerMotion="none"` or the user prefers reduced motion.
+- **Amenities.** Category chips stay on the map. Every amenity dot always pulses; opening a category only opens that list. Hover or click flies the camera between the project and that place and, when a driving line was published, draws it. The halo pulses unless `markerMotion="none"` or the user prefers reduced motion. There are no Amenities or Navigation buttons.
 - **Place sheet.** Gallery, name, description, distance from the project, and “Directions from the project”. A town place adds Street View. A linked 360 photo opens a panorama with lot outlines. Desktop: a left sheet. Mobile (under 720px): a bottom sheet at 72% height. Escape or the scrim closes it.
-- **Map Options** (top right). Recenter, 3D pitch, satellite, a travel-time ring (walk, bike, or drive, in minutes), and “Places list only”. That switch starts on: the category chips, the Amenities button, and Navigation stay hidden, and every place is in the amenity list. Turn it off to bring those controls back. Map dots still need an open category, so they stay hidden while the switch is on. These choices stay in the browser. They are not saved on the project. The travel ring uses the same Mapbox token.
-- **Navigation.** A second, flat list of place names. It does not replace Amenities.
+- **Map Options** (top right). Recenter, 3D pitch, satellite, and a travel-time ring (walk, bike, or drive, in minutes). These choices stay in the browser. They are not saved on the project. The travel ring uses the same Mapbox token.
 - **Scenes.** `activeSceneId` plus `scenePlaying={true}` flies to that scene’s camera. `durationMs` is the time spent traveling into the scene, not a dwell time. The last scene back to the first keeps the tour’s turn direction. The package draws no play bar and no scene title.
 
 ## What the landing page designs
@@ -70,7 +69,7 @@ const experience = await loadPublishedExperience({
 
 - A lot sheet opened from `onLotClick`. Show number, stage, status, area, and price, then the next step (inquire or reserve). Checkout is not in the package.
 - Do not add a second amenity list, a route-color control, or another satellite toggle. `onAmenitySelect` is for a side effect (analytics, a deeper page). The place sheet already opens inside the player.
-- On a phone, keep headers, tabs, and sticky bars off Map Options and off the top-left Amenities and Navigation buttons.
+- On a phone, keep headers, tabs, and sticky bars off Map Options and the category chips.
 
 Match the player: dark surface, copper `#E07A3D` and `#C4532A`, text `#f8fafc`.
 

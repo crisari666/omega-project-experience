@@ -385,7 +385,9 @@ function mountExperienceLayers(map: Map, snap: OverlaySnap): void {
   if (!map.getSource(AMENITY_SOURCE)) {
     map.addSource(AMENITY_SOURCE, { type: "geojson", data: snap.amenities })
   }
-  const amenityHidden = { visibility: "none" as const }
+  const amenityVisibility = {
+    visibility: (snap.showAmenities ? "visible" : "none") as "visible" | "none"
+  }
   const roundMarker = {
     "circle-pitch-alignment": "viewport" as const,
     "circle-pitch-scale": "viewport" as const,
@@ -397,8 +399,7 @@ function mountExperienceLayers(map: Map, snap: OverlaySnap): void {
       id: AMENITY_HALO_LAYER,
       type: "circle",
       source: AMENITY_SOURCE,
-      layout: amenityHidden,
-      filter: ["==", ["get", "categoryKey"], ""],
+      layout: amenityVisibility,
       paint: {
         ...roundMarker,
         "circle-radius": HALO_START_RADIUS,
@@ -412,8 +413,7 @@ function mountExperienceLayers(map: Map, snap: OverlaySnap): void {
       id: AMENITY_LAYER,
       type: "circle",
       source: AMENITY_SOURCE,
-      layout: amenityHidden,
-      filter: ["==", ["get", "categoryKey"], ""],
+      layout: amenityVisibility,
       paint: {
         ...roundMarker,
         "circle-radius": [
@@ -1013,21 +1013,16 @@ export function ProjectExperience({
     hoveredIdRef.current = hoveredId
   }, [amenities, hoveredId, mapReady])
 
-  const activeCategoryKey = showAmenities ? openCategoryKey : null
-
   useEffect(() => {
     const map = mapRef.current
     if (!map) return
-    const visible = showAmenities && Boolean(activeCategoryKey) ? "visible" : "none"
-    const categoryFilter = activeCategoryKey
-      ? ["==", ["get", "categoryKey"], activeCategoryKey]
-      : ["==", ["get", "categoryKey"], ""]
+    const visible = showAmenities ? "visible" : "none"
     ;[AMENITY_LAYER, AMENITY_HALO_LAYER].forEach((layerId) => {
       if (!map.getLayer(layerId)) return
-      map.setFilter(layerId, categoryFilter)
+      map.setFilter(layerId, null)
       map.setLayoutProperty(layerId, "visibility", visible)
     })
-  }, [activeCategoryKey, amenities, mapReady, showAmenities])
+  }, [amenities, mapReady, showAmenities])
 
   const hoveredAmenity = amenityRows.find((row) => row.id === hoveredId) ?? null
   const hoveredLngLat = hoveredAmenity
