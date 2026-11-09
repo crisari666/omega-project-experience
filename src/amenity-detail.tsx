@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react"
+import React, { useEffect, useMemo, useState } from "react"
 import type { AmenitySelectPayload } from "./types"
 import { resolveMediaUrl } from "./load-published"
 
@@ -63,6 +63,16 @@ function directionsUrl(
   return `https://www.google.com/maps/dir/?api=1${origin}&destination=${destination}`
 }
 
+function uniqueResolvedGallery(
+  urls: readonly string[],
+  apiOrigin: string
+): string[] {
+  const resolved = urls
+    .map((url) => resolveMediaUrl(apiOrigin, url))
+    .filter((url) => url.length > 0)
+  return [...new Set(resolved)]
+}
+
 export function AmenityDetail({
   amenity,
   apiOrigin,
@@ -70,10 +80,12 @@ export function AmenityDetail({
   googleMapsApiKey,
   onClose
 }: Props) {
-  const gallery = amenity.gallery
-    .map((url) => resolveMediaUrl(apiOrigin, url))
-    .filter((url) => url.length > 0)
+  const gallery = useMemo(
+    () => uniqueResolvedGallery(amenity.gallery, apiOrigin),
+    [amenity.gallery, apiOrigin]
+  )
   const [activeIndex, setActiveIndex] = useState(0)
+  const [heroLoaded, setHeroLoaded] = useState(false)
   const directions = directionsUrl(amenity, projectCenter)
   const streetView = streetViewUrl({ amenity, projectCenter, googleMapsApiKey })
   const streetViewEmbedded = Boolean(googleMapsApiKey?.trim()) && Boolean(streetView)
@@ -86,6 +98,19 @@ export function AmenityDetail({
   useEffect(() => {
     setActiveIndex(0)
   }, [amenity.id])
+  useEffect(() => {
+    setHeroLoaded(false)
+  }, [activeIndex, hero])
+  useEffect(() => {
+    if (gallery.length < 2) return
+    const prev = gallery[(activeIndex - 1 + gallery.length) % gallery.length]
+    const next = gallery[(activeIndex + 1) % gallery.length]
+    for (const url of [prev, next]) {
+      if (!url) continue
+      const image = new Image()
+      image.src = url
+    }
+  }, [activeIndex, gallery])
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose()
@@ -129,7 +154,17 @@ export function AmenityDetail({
       </button>
       {hero && (
         <div style={heroFrameStyle}>
-          <img src={hero} alt="" style={heroStyle} />
+          <img
+            key={activeIndex}
+            src={hero}
+            alt=""
+            onLoad={() => setHeroLoaded(true)}
+            style={{
+              ...heroStyle,
+              opacity: heroLoaded ? 1 : 0.35,
+              transition: "opacity 120ms ease"
+            }}
+          />
           {hasSeveral && (
             <>
               <button

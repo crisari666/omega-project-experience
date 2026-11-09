@@ -225,10 +225,16 @@ function toAmenityPayload(
   amenity: PublicAmenity,
   source: AmenitySelectSource
 ): AmenitySelectPayload {
-  const gallery = [
-    ...(amenity.media.cover ? [amenity.media.cover] : []),
-    ...amenity.media.gallery
-  ].filter((url, index, all) => all.indexOf(url) === index)
+  const mediaGallery = [...amenity.media.gallery]
+  const cover = amenity.media.cover?.trim() || ""
+  const gallery =
+    cover && !mediaGallery.includes(cover)
+      ? [cover, ...mediaGallery]
+      : mediaGallery.length > 0
+        ? mediaGallery
+        : cover
+          ? [cover]
+          : []
   return {
     id: amenity.id,
     name: amenity.name,
@@ -237,7 +243,7 @@ function toAmenityPayload(
     categoryLabel: amenity.categoryLabel,
     description: amenity.description,
     subtitle: amenity.subtitle,
-    gallery,
+    gallery: [...new Set(gallery.filter((url) => url.length > 0))],
     distanceMeters: amenity.distanceMeters,
     estimatedTravelMinutes: amenity.estimatedTravelMinutes,
     lngLat: representativePoint(amenity.geometry),
