@@ -44,7 +44,7 @@ One Mapbox map. Do not mount a second map next to this stage.
 
 These sit on top of the map. Leave them.
 
-- **Lots.** Polygons fill by status. Available uses the published `map.availableLotColor`, or `#15803d` when that value is missing. Sold is `#64748b`, reserved is `#b45309`, anything else is `#1e293b`. A click calls `onLotClick`. There is no purchase sheet.
+- **Lots.** Polygons fill by status. Available uses the published `map.availableLotColor`, or `#15803d` when that value is missing. Sold is `#E11D48` (same as lot-inventory default), reserved is `#b45309`, anything else is `#1e293b`. A click calls `onLotClick`. There is no purchase sheet.
 - **Amenities.** Category chips stay on the map. Every amenity dot always pulses; opening a category only opens that list. Hover or click flies the camera between the project and that place and, when a driving line was published, draws it. The halo pulses unless `markerMotion="none"` or the user prefers reduced motion. There are no Amenities or Navigation buttons.
 - **Place sheet.** Gallery, name, description, distance from the project, and “Directions from the project”. A town place adds Street View. A linked 360 photo opens a panorama with lot outlines. Desktop: a left sheet. Mobile (under 720px): a bottom sheet at 72% height. Escape or the scrim closes it.
 - **Map Options** (top right). Recenter, 3D pitch, satellite, and a travel-time ring (walk, bike, or drive, in minutes). These choices stay in the browser. They are not saved on the project. The travel ring uses the same Mapbox token.

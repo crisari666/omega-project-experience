@@ -74,7 +74,7 @@ function lotFillColor(available: string): mapboxgl.ExpressionSpecification {
     "available",
     available,
     "sold",
-    "#64748b",
+    "#E11D48",
     "reserved",
     "#b45309",
     "#1e293b"

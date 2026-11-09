@@ -7,7 +7,7 @@ const DEGREES = Math.PI / 180
 
 const LOT_COLORS: Record<string, string> = {
   available: "#15803d",
-  sold: "#64748b",
+  sold: "#E11D48",
   reserved: "#b45309"
 }
 
